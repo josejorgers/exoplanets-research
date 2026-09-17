@@ -1,0 +1,28 @@
+[project]
+name = "exoplanets-research"
+version = "0.1.0"
+description = "Exoplanet research analysis"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "astropy>=8.0.1",
+    "astroquery>=0.4.11",
+    "black[jupyter]>=26.5.1",
+    "dotenv>=0.9.9",
+    "joblib>=1.6.0",
+    "jupyter>=1.1.1",
+    "lightkurve>=2.6.0",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.3",
+    "oktopus>=0.1.2",
+    "pandas>=2.3.3",
+    "pyarrow>=25.0.1",
+    "setuptools>=84.0.0",
+    "tess-point>=0.9.5.post1",
+    "tqdm>=4.70.1",
+    "transitleastsquares>=1.32",
+    "wotan>=1.10",
+]
+
+[tool.black]
+target-version = ["py314"]
