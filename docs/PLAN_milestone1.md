@@ -292,6 +292,23 @@ Goal: a flat light curve with transits preserved.
 
 Sanity checks: standard deviation of flattened flux should be close to the median `flux_err`; inject a fake 2 mmag box dip in one star and confirm it survives flattening.
 
+**TODO — orbit-edge fix (found in `notebooks/pipeline-4-search-walkthrough.ipynb`, §4/§8).**
+The raw QLP/SPOC flux climbs by ~10 % over the first day of each orbit (scattered
+light as the spacecraft comes off perigee). The biweight window is one-sided at
+the edge and leaves a ~2 % residual dip there, which TLS then reports as a
+high-SDE "transit" (e.g. TIC 6283622: SDE 23, P = `period_max`, 1 of 2
+transits with data; same for LHS 3844 in the second pass). This was 2 of the 5
+stars searched by hand, so it will be the most common false positive in the
+sector. Fix it here, not in `search.py`:
+1. Trim the first/last ~0.25 d of each orbit (split the light curve at the
+   mid-sector gap, i.e. any gap > 0.5 d, then drop the edges of each segment)
+   *before* flattening. Make the trim length a CLI option (`--edge-trim`).
+2. Mask the scattered-light windows listed in the sector's Data Release Notes
+   (store them in `config.toml` per sector — item 4 above).
+3. Record `n_trimmed` in the detrend summary row.
+After the change, re-run `search.py --force` on those two stars and confirm
+the edge signal is gone. Whatever survives still needs the vetting rules in §7.
+
 Source: wotan docs — https://github.com/hippke/wotan
 
 ---
@@ -306,7 +323,8 @@ Goal: one row per star with the best TLS signal.
    - `oversampling_factor=3`, `duration_grid_step=1.1`
    - `use_threads` = 1 per star, parallelize across stars with `joblib`
 2. Record: `period, T0, depth, duration, SDE, snr, odd_even_mismatch, transit_count, distinct_transit_count, per-transit depths, FAP`.
-3. Optional second pass: mask the best signal (`transit_mask`) and re-run once to find a second planet.
+3. Optional second pass: `--second-pass` reads the first-pass table, masks each star's best signal (`transit_mask`, 2× duration) and re-runs TLS to find a second planet. Output has the same columns, in `data/search/pass2/sector_N_pass2.parquet`.
+   Use `period_min = 0.2 d`, not 0.5: ultra-short-period planets around M dwarfs are a real population (LHS 3844 b at 0.463 d is in sector 104) and short periods add few grid points. Do **not** fix the orbit-edge false positive (§5 TODO) in this step; only store the fields vetting needs to reject it (`distinct_transit_count`, `empty_transit_count`, `period_unc`, `period_max`, `transit_depths`).
 4. Save all rows to `data/search/sector_N.parquet` (don't threshold here — thresholds are applied in vetting so you can tune them).
 
 Runtime: TLS on a 27-day, 10-min-cadence light curve is ~10–60 s per star on one core. 1,000 stars × 30 s / 8 cores ≈ 1 h. Start with 50 stars to time it.
@@ -326,6 +344,7 @@ Goal: reduce hundreds of "signals" to a handful worth human time. Implement each
 | SDE threshold | SDE ≥ 9 (tune with injection tests) | noise |
 | SNR | snr ≥ 7 | noise |
 | Transit count | ≥ 2 distinct transits with individually significant depth | single outliers |
+| Grid-edge period | `period` not within a few grid steps of `period_max` (stored per star by `search.py`) and `period_unc` finite; with `distinct_transit_count == 1` this is the orbit-edge artefact of §5 — see the walkthrough notebook §4 | start-of-orbit scattered-light residual, single events |
 | Odd/even depth | odd and even depths agree within 3σ | EBs at 2× period |
 | Secondary eclipse | no significant dip at phase 0.5 | EBs |
 | Duration vs stellar density | duration consistent with circular orbit around a star of TIC radius/mass (within ×3) | blends, wrong host |
