@@ -292,22 +292,28 @@ Goal: a flat light curve with transits preserved.
 
 Sanity checks: standard deviation of flattened flux should be close to the median `flux_err`; inject a fake 2 mmag box dip in one star and confirm it survives flattening.
 
-**TODO — orbit-edge fix (found in `notebooks/pipeline-4-search-walkthrough.ipynb`, §4/§8).**
+**Orbit-edge fix (found in `notebooks/pipeline-4-search-walkthrough.ipynb`, §4/§8; implemented 2026-09-20).**
 The raw QLP/SPOC flux climbs by ~10 % over the first day of each orbit (scattered
 light as the spacecraft comes off perigee). The biweight window is one-sided at
 the edge and leaves a ~2 % residual dip there, which TLS then reports as a
-high-SDE "transit" (e.g. TIC 6283622: SDE 23, P = `period_max`, 1 of 2
+high-SDE "transit" (e.g. TIC 6283622: SDE 23–28, P = `period_max`, 1 of 2
 transits with data; same for LHS 3844 in the second pass). This was 2 of the 5
-stars searched by hand, so it will be the most common false positive in the
-sector. Fix it here, not in `search.py`:
-1. Trim the first/last ~0.25 d of each orbit (split the light curve at the
-   mid-sector gap, i.e. any gap > 0.5 d, then drop the edges of each segment)
-   *before* flattening. Make the trim length a CLI option (`--edge-trim`).
-2. Mask the scattered-light windows listed in the sector's Data Release Notes
-   (store them in `config.toml` per sector — item 4 above).
-3. Record `n_trimmed` in the detrend summary row.
-After the change, re-run `search.py --force` on those two stars and confirm
-the edge signal is gone. Whatever survives still needs the vetting rules in §7.
+stars searched by hand, so it was the most common false positive in the sector.
+
+What `detrend.py` now does (`edge_mask`, `--edge-trim`, default 0.25 d):
+split the light curve at gaps > 0.5 d (the orbits), flatten on *all* points,
+then drop the first/last `edge_trim` days of each orbit. The count goes to
+`n_trimmed` in the detrend summary. Measured on TIC 6283622 (deepest 1.7 h
+running-median dip near the edges, vs 0.30 % elsewhere): untrimmed 2.3 %;
+trim 0.25 d *before* flattening 1.9 % (the ramp just moves the edge — do not
+do this); trim 0.25 d *after* flattening 0.36 % ≈ noise. `search.py` on the
+re-detrended star: SDE 27.8 → 6.6 (noise). `edge_trim ≈ window_length / 2`
+is the region where the window is one-sided; scale it if you change the window.
+Cost: ~360 of 8,800 points per star (4 %).
+
+Still TODO here: mask the scattered-light windows listed in the sector's Data
+Release Notes (store them in `config.toml` per sector — item 4 above). Whatever
+survives still needs the vetting rules in §7.
 
 Source: wotan docs — https://github.com/hippke/wotan
 

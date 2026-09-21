@@ -3,6 +3,7 @@
 Usage:
     uv run python -m src.detrend                      # sector from .env
     uv run python -m src.detrend --sector 104 --limit 20 --window-length 0.5
+    uv run python -m src.detrend --edge-trim 0.25          # days dropped at each orbit edge (default)
     uv run python -m src.detrend --force
 
 Input : data/targets/sector_{N}_manifest.parquet (rows with status == "ok", from src.fetch)
@@ -40,6 +41,7 @@ class DetrendRow:
     tic_id: int
     n_in: int = 0  # points after quality mask + NaN removal
     n_out: int = 0  # points after upward outlier clipping
+    n_trimmed: int = 0  # points dropped at the orbit edges (edge_trim)
     std_flat: float = np.nan  # robust std (1.4826*MAD) of flattened flux (ppm)
     med_err: float = np.nan  # median flux_err (ppm) — should be close to std_flat
     file_path: str = ""
@@ -57,8 +59,32 @@ def _worker_logging() -> None:
         logging.getLogger("lightkurve").setLevel(logging.ERROR)
 
 
-def detrend_one(tic_id: int, raw_file: str, window_length: float = 0.5) -> DetrendRow:
-    """Read one FITS light curve, normalize, clip flares, flatten with wotan, save parquet."""
+def edge_mask(time: np.ndarray, edge_trim: float, gap: float = 0.5) -> np.ndarray:
+    """True for points farther than `edge_trim` days from the start/end of each orbit.
+
+    Orbits are the segments separated by gaps longer than `gap` days (the mid-sector
+    downlink). Scattered light as the spacecraft comes off perigee makes the raw flux
+    climb ~10 % over the first day of an orbit; the biweight window is one-sided there
+    and leaves a ~2 % residual dip that TLS reports as a high-SDE single "transit".
+    Apply this AFTER flattening: trimming before only moves the edge (tested on
+    TIC 6283622: 2.3 % residual untrimmed, 1.9 % trimmed before, 0.36 % = noise
+    trimmed after). edge_trim = window_length / 2 covers the one-sided region.
+    """
+    keep = np.ones(len(time), dtype=bool)
+    if edge_trim <= 0 or len(time) == 0:
+        return keep
+    starts = np.r_[0, np.where(np.diff(time) > gap)[0] + 1]
+    ends = np.r_[starts[1:], len(time)]
+    for a, b in zip(starts, ends):
+        seg = time[a:b]
+        keep[a:b] = (seg - seg[0] >= edge_trim) & (seg[-1] - seg >= edge_trim)
+    return keep
+
+
+def detrend_one(
+    tic_id: int, raw_file: str, window_length: float = 0.5, edge_trim: float = 0.25
+) -> DetrendRow:
+    """Read one FITS light curve, normalize, clip flares, flatten with wotan, trim orbit edges, save parquet."""
     _worker_logging()
     row = DetrendRow(tic_id=tic_id)
     try:
@@ -94,6 +120,10 @@ def detrend_one(tic_id: int, raw_file: str, window_length: float = 0.5) -> Detre
         )
         # biweight leaves NaN where the window has too few points (edges, gaps) — drop them
         good = np.isfinite(flat)
+        # 4. drop the first/last edge_trim days of each orbit, where the window was one-sided (see edge_mask)
+        keep = edge_mask(time, edge_trim)
+        row.n_trimmed = int((good & ~keep).sum())
+        good &= keep
 
         # QLP files carry NaN flux_err for the SAP flux; fall back to a robust scatter estimate
         bad_err = ~np.isfinite(flux_err)
@@ -122,10 +152,11 @@ def detrend_one(tic_id: int, raw_file: str, window_length: float = 0.5) -> Detre
         row.file_path = str(path)
         row.status = "ok"
         log.info(
-            "TIC %d: %d -> %d pts, std %.0f ppm, median err %.0f ppm",
+            "TIC %d: %d -> %d pts (%d edge-trimmed), std %.0f ppm, median err %.0f ppm",
             tic_id,
             row.n_in,
             len(out),
+            row.n_trimmed,
             row.std_flat,
             row.med_err,
         )
@@ -141,6 +172,7 @@ def detrend_sector(
     n_jobs: int = 8,
     limit: int | None = None,
     force: bool = False,
+    edge_trim: float = 0.25,
 ) -> pd.DataFrame:
     manifest = pd.read_parquet(
         DATA_DIR / "targets" / f"sector_{sector}_manifest.parquet"
@@ -149,21 +181,22 @@ def detrend_sector(
     if not force:
         ok = ok[~ok["tic_id"].map(lambda t: (FLAT_DIR / f"{t}.parquet").exists())]
     log.info(
-        "sector %d: %d light curves downloaded, %d to detrend (window %.2f d, %d workers)",
+        "sector %d: %d light curves downloaded, %d to detrend (window %.2f d, edge trim %.2f d, %d workers)",
         sector,
         (manifest["status"] == "ok").sum(),
         len(ok),
         window_length,
+        edge_trim,
         n_jobs,
     )
 
     rows = joblib.Parallel(n_jobs=n_jobs)(
-        joblib.delayed(detrend_one)(int(r.tic_id), r.file_path, window_length)
+        joblib.delayed(detrend_one)(int(r.tic_id), r.file_path, window_length, edge_trim)
         for r in ok.itertuples()
     )
     summary = pd.DataFrame([asdict(r) for r in rows])
     summary_path = DATA_DIR / "targets" / f"sector_{sector}_detrend.parquet"
-    if summary_path.exists() and not force:
+    if summary_path.exists():  # keep rows of stars not re-run (also with --force)
         old = pd.read_parquet(summary_path)
         summary = pd.concat(
             [old[~old["tic_id"].isin(summary.get("tic_id", []))], summary],
@@ -196,6 +229,12 @@ def main() -> None:
         default=0.5,
         help="biweight window in days (~3x longest transit)",
     )
+    p.add_argument(
+        "--edge-trim",
+        type=float,
+        default=0.25,
+        help="days dropped at the start and end of each orbit after flattening (0 to disable; ~window/2)",
+    )
     p.add_argument("--n-jobs", type=int, default=8)
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--force", action="store_true")
@@ -206,7 +245,7 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     logging.getLogger("lightkurve").setLevel(logging.ERROR)
-    s = detrend_sector(a.sector, a.window_length, a.n_jobs, a.limit, a.force)
+    s = detrend_sector(a.sector, a.window_length, a.n_jobs, a.limit, a.force, a.edge_trim)
     print(s.to_string())
 
 
