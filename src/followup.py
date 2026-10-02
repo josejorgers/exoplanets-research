@@ -106,8 +106,8 @@ def _tls_window(lc: pd.DataFrame, P: float, rad: float, mass: float, window: flo
         warnings.simplefilter("ignore")
         return transitleastsquares(t, y, dy).power(
             R_star=rad, M_star=mass, R_star_min=0.1, R_star_max=1.0, M_star_min=0.05, M_star_max=1.0,
-            period_min=P * (1 - window), period_max=P * (1 + window), oversampling_factor=5,
-            duration_grid_step=1.05, use_threads=threads, show_progress_bar=False, verbose=False,
+            period_min=P * (1 - window), period_max=P * (1 + window), oversampling_factor=3,
+            duration_grid_step=1.1, use_threads=threads, show_progress_bar=False, verbose=False,
         )
 
 
@@ -290,32 +290,51 @@ def difference_image(tic_id: int, star: pd.Series, P: float, T0: float, dur_h: f
     tgt = target_coord(star, float(np.median(t)))
     tx, ty = tpf.wcs.world_to_pixel(tgt)
 
+    yy, xx = np.indices(diff.shape)
+    near_target = np.hypot(xx - tx, yy - ty) <= 3.0
+
     def centroid(img):
-        """Flux-weighted centroid of the positive pixels within 2 px of the image's brightest pixel."""
-        yy, xx = np.indices(img.shape)
-        py, px = np.unravel_index(np.nanargmax(img), img.shape)
-        w = np.where((np.hypot(xx - px, yy - py) <= 2) & (img > 0), img, 0.0)
+        """Flux-weighted centroid of the positive pixels within 1.5 px of the image's peak inside 3 px
+        of the target. Restricting to the target's surroundings keeps noise peaks elsewhere in the
+        cutout (and brighter neighbours in the out-of-transit image) from hijacking the centroid."""
+        masked = np.where(near_target, img, -np.inf)
+        py, px = np.unravel_index(np.argmax(masked), img.shape)
+        w = np.where((np.hypot(xx - px, yy - py) <= 1.5) & (img > 0) & near_target, img, 0.0)
+        if w.sum() <= 0:
+            return np.nan, np.nan
         return float((w * xx).sum() / w.sum()), float((w * yy).sum() / w.sum())
 
     cx, cy = centroid(diff)
     ox, oy = centroid(oot)
     rng = np.random.default_rng(seed)
     boot = np.array([centroid(diffs[rng.integers(0, len(diffs), len(diffs))].mean(axis=0)) for _ in range(n_boot)])
-    sx, sy = boot.std(axis=0)
-    off = float(np.hypot(cx - tx, cy - ty))
+    boot = boot[np.all(np.isfinite(boot), axis=1)]
+    sx, sy = boot.std(axis=0) if len(boot) > 10 else (np.nan, np.nan)
     sig = float(np.hypot(sx, sy))
-    # significance of the difference image at the target: depth / its scatter across transits
+    off = float(np.hypot(cx - ox, cy - oy))  # difference centroid vs the target's own light centroid
+    off_cat = float(np.hypot(cx - tx, cy - ty))  # vs the catalog position
+    # where is the strongest flux loss anywhere in the cutout, in units of its scatter across transits?
+    snr_img = diff / (diffs.std(axis=0) / np.sqrt(len(diffs)))
+    gy, gx = np.unravel_index(np.nanargmax(snr_img), snr_img.shape)
     ix, iy = int(round(float(tx))), int(round(float(ty)))
     res = {
         "sector": sector, "n_transits": len(diffs), "target_px": [float(tx), float(ty)],
         "diff_centroid_px": [cx, cy], "oot_centroid_px": [ox, oy],
         "offset_px": off, "offset_arcsec": off * PIXEL_ARCSEC, "offset_err_px": sig,
-        "offset_sigma": off / sig if sig > 0 else np.nan,
-        "diff_oot_offset_px": float(np.hypot(cx - ox, cy - oy)),
-        "depth_at_target_pixel": float(diff[iy, ix] / oot[iy, ix]) if 0 <= ix < size and 0 <= iy < size else np.nan,
+        "offset_sigma": off / sig if sig > 0 else np.nan, "offset_from_catalog_px": off_cat,
+        "strongest_loss_px": [int(gx), int(gy)], "strongest_loss_snr": float(snr_img[gy, gx]),
+        "strongest_loss_dist_px": float(np.hypot(gx - tx, gy - ty)),
+        "loss_snr_at_target": float(snr_img[iy, ix]) if 0 <= ix < size and 0 <= iy < size else np.nan,
     }
+    sky = tpf.wcs.pixel_to_world(gx, gy)
+    res["strongest_loss_radec"] = [float(sky.ra.deg), float(sky.dec.deg)]
+    # off target: the centroid of the flux loss is significantly away from the star's own light, or the
+    # strongest loss in the cutout sits > 1.5 px away and is clearly stronger than at the target
+    res["off_target"] = bool((res["offset_sigma"] > 3 and off > 0.5)
+                             or (res["strongest_loss_dist_px"] > 1.5 and res["strongest_loss_snr"] > 5
+                                 and res["loss_snr_at_target"] < 0.5 * res["strongest_loss_snr"]))
     np.savez_compressed(out_dir / f"diffimage_s{sector}.npz", diff=diff, oot=oot, target=[tx, ty],
-                        centroid=[cx, cy], boot=boot)
+                        centroid=[cx, cy], oot_centroid=[ox, oy], strongest=[gx, gy], snr_img=snr_img, boot=boot)
     res["_tpf_wcs"] = tpf.wcs  # for plotting in the notebook; dropped from JSON
     return res
 
@@ -352,7 +371,7 @@ def gaia_neighbours(coord: SkyCoord, depth_ppm: float, radius_arcsec: float = 63
 
 
 def fpp(tic_id: int, ms: pd.DataFrame, P: float, T0: float, dur_h: float, depth_ppm: float, sector: int,
-        n_draws: int = 100_000, seed: int = 0) -> dict:
+        n_draws: int = 20_000, seed: int = 0) -> dict:
     """TRICERATOPS false-positive probability from the discovery sector's folded light curve."""
     from src import _compat  # noqa: F401  (scipy/pkg_resources shims needed by pytransit)
     import triceratops.triceratops as tr
@@ -362,15 +381,38 @@ def fpp(tic_id: int, ms: pd.DataFrame, P: float, T0: float, dur_h: float, depth_
     dt = (g["time"].to_numpy() - T0 + P / 2) % P - P / 2
     sel = np.abs(dt) < 3 * dur_h / 24
     oot = np.abs(dt) > dur_h / 24
-    flux = g["flux"].to_numpy()
-    err = 1.4826 * np.median(np.abs(flux[oot] - np.median(flux[oot])))
     target = tr.target(ID=tic_id, sectors=np.array([sector]))
-    target.calc_depths(tdepth=depth_ppm)
+    # Aperture: pixels within 1.5 px of the target, close to QLP/SPOC apertures for T ~ 11-14
+    # (triceratops' default 5x5 aperture lets far more neighbour light in than our light curves had).
+    tx, ty = np.round(target.pix_coords[0][0])
+    xx, yy = np.meshgrid(np.arange(tx - 2, tx + 3), np.arange(ty - 2, ty + 3))
+    keep = np.hypot(xx - target.pix_coords[0][0][0], yy - target.pix_coords[0][0][1]) <= 1.5
+    ap = np.column_stack([xx[keep], yy[keep]])
+    # NB: despite its docstring ("[ppm]"), calc_depths expects a FRACTION: it computes depth / flux_ratio
+    # and discards anything > 1, so passing ppm silently removes every star (all scenarios get prob 1/12).
+    # Our light curves are DEBLENDED (neighbour light removed); triceratops models the light curve as
+    # observed in the aperture, diluted by every star in it. So we first get the target's flux ratio in
+    # the aperture, then re-dilute the light curve and the depth by it.
+    target.calc_depths(tdepth=0.5 * depth_ppm / 1e6, all_ap_pixels=[ap])
+    fr_target = float(target.stars["fluxratio"].iloc[0])
+    target.calc_depths(tdepth=depth_ppm / 1e6 * fr_target, all_ap_pixels=[ap])
+    if not (target.stars["tdepth"] > 0).any():
+        raise RuntimeError("no star can produce the transit depth; check the depth units")
+    flux = 1 - (1 - g["flux"].to_numpy()) * fr_target
+    err = 1.4826 * np.median(np.abs(flux[oot] - np.median(flux[oot])))
+    # Background-star scenarios need a TRILEGAL Galaxy-model population. When the TRILEGAL server is
+    # unreachable this triceratops version announces it will skip them but then crashes in them, so
+    # drop them explicitly. The FPP is then OPTIMISTIC (unresolved background EBs not considered).
+    dropped = []
+    if getattr(target, "trilegal_url", None) is None and getattr(target, "trilegal_fname", None) is None:
+        dropped = ["DTP", "DEB", "BTP", "BEB"]
+        log.warning("TIC %d: TRILEGAL unavailable, background scenarios %s dropped (FPP optimistic)", tic_id, dropped)
     target.calc_probs(time=dt[sel], flux_0=flux[sel], flux_err_0=float(err), P_orb=float(P), N=n_draws,
-                      exptime=float(g["cadence_s"].iloc[0]) / 86400, verbose=0)
+                      exptime=float(g["cadence_s"].iloc[0]) / 86400, verbose=0, drop_scenario=dropped)
     probs = target.probs[["scenario", "ID", "prob"]].copy()
     probs["ID"] = probs["ID"].astype(str)
     return {"FPP": float(target.FPP), "NFPP": float(target.NFPP), "n_draws": n_draws,
+            "dropped_scenarios": dropped, "aperture_pixels": int(len(ap)), "target_flux_ratio": fr_target,
             "scenarios": probs.sort_values("prob", ascending=False).head(8).to_dict("records")}
 
 
