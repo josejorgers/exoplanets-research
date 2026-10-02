@@ -63,21 +63,27 @@ THRESH = dict(
     dur_ratio_min=1 / 3,  # observed / expected central-transit duration
     dur_ratio_max=3.0,
     rp_earth_max=16.8,  # 1.5 R_Jup; giants around M dwarfs are not inflated
-    var_harmonic_tol=0.005,  # period ratio within 0.5 % of an integer ...
+    var_fap_max=1e-3,  # variability: a significant Lomb-Scargle peak (white-noise false-alarm probability) ...
+    var_harmonic_tol=1.0,  # ... at a harmonic of the TLS frequency, within 1 frequency-resolution element (1/baseline) ...
     var_harmonic_n_max=10,
-    var_amp_frac_max=0.15,  # ... and variability semi-amplitude >= 15 % of the depth
+    var_amp_frac_max=0.15,  # ... and semi-amplitude >= 15 % of the transit depth
+    variable_amp_frac=0.3,  # soft: a significant modulation >= 30 % of the depth at any period
     v_shape_max=0.3,  # soft: trapezoid T23/T14 below this = V-shaped
     centroid_sigma_max=3.0,  # soft
     contratio_max=0.5,  # soft
 )
 # Used while computing metrics (not re-applicable with --rethreshold).
-DUMP_WINDOW_D = 0.1  # +- days around a momentum dump (plus half a transit)
+# Momentum dumps leave flux steps; the 0.5-d biweight smears a step over +- window/2, so a
+# transit within 0.25 d (+ half its duration) of a dump is suspect (same reasoning as edge_trim).
+DUMP_WINDOW_D = 0.25
+LOCAL_NOISE_D = 0.5  # per-transit noise from out-of-transit points within +- this many days
+EDGE_COVERAGE_MIN = 0.5  # a transit needs >= 50 % of the expected points on EACH side
 
 HARD = [
-    "sde", "snr", "n_transits", "grid_edge", "single_event", "momentum_dump",
+    "sde", "snr", "n_transits", "grid_edge", "single_event", "momentum_dump", "data_edges",
     "odd_even", "secondary", "duration", "radius", "variability",
 ]
-SOFT = ["v_shaped", "centroid", "contamination"]
+SOFT = ["v_shaped", "centroid", "contamination", "variable_star"]
 
 G = 6.674e-11
 R_SUN = 6.957e8
@@ -100,6 +106,8 @@ class VetRow:
     single_event_survival: float = np.nan  # SNR kept without the strongest transit, vs sqrt(N) expectation
     n_near_dump: int = 0
     dump_survival: float = np.nan  # same, without the transits near momentum dumps
+    n_edge: int = 0  # transits with < EDGE_COVERAGE_MIN of the expected data on one side (gaps, orbit edges)
+    edge_survival: float = np.nan  # same, without those transits
     # --- odd/even, secondary ---
     depth_odd_ppm: float = np.nan
     depth_even_ppm: float = np.nan
@@ -117,6 +125,9 @@ class VetRow:
     var_power: float = np.nan
     var_amp_ppm: float = np.nan
     var_period_ratio: float = np.nan  # P_tls / P_var
+    var_fap: float = np.nan  # false-alarm probability of the peak (white noise; optimistic for red noise)
+    var_harmonic_n: float = np.nan  # the harmonic (n: f_var = n f_tls; -n: f_tls = n f_var) closest to the peak
+    var_harmonic_offset: float = np.nan  # its frequency offset in resolution elements (1/baseline)
     var_amp_frac: float = np.nan  # variability semi-amplitude / transit depth
     # --- soft-flag metrics ---
     trap_depth_ppm: float = np.nan
@@ -204,13 +215,26 @@ def _depth_err(y, mask, err1) -> tuple[float, float]:
     return 1 - float(y[mask].mean()), err1 / np.sqrt(n)
 
 
-def _per_transit(t, y, in_tr, epoch, T0, period, err1) -> pd.DataFrame:
+def _per_transit(t, y, in_tr, oot, epoch, T0, period, dur, beta, sigma) -> pd.DataFrame:
+    """Depth, error and SNR of every transit with data, plus its data coverage on both sides.
+
+    The error uses the LOCAL out-of-transit scatter (within +- LOCAL_NOISE_D), so a transit that
+    falls in a noisy stretch (scattered light, a ramp after a gap) gets a large error instead of
+    borrowing the quiet noise level of the rest of the sector.
+    """
+    cadence = float(np.median(np.diff(t))) if len(t) > 1 else np.nan
+    side = max(dur, 1 / 24)  # length of each side window, days
     rows = []
     for k in np.unique(epoch[in_tr]):
         m = in_tr & (epoch == k)
-        d, e = _depth_err(y, m, err1)
-        rows.append((k, T0 + k * period, d, e))
-    pt = pd.DataFrame(rows, columns=["epoch", "t_mid", "depth", "err"])
+        tm = T0 + k * period
+        near = oot & (np.abs(t - tm) < LOCAL_NOISE_D)
+        sig_k = _robust_std(y[near]) if near.sum() >= 30 else sigma
+        d, e = _depth_err(y, m, beta * max(sig_k, sigma * 0.5))  # floor: never trust a local sigma < half the global
+        pre = ((t > tm - dur / 2 - side) & (t < tm - dur / 2)).sum() * cadence / side
+        post = ((t > tm + dur / 2) & (t < tm + dur / 2 + side)).sum() * cadence / side
+        rows.append((k, tm, d, e, sig_k, min(pre, post)))
+    pt = pd.DataFrame(rows, columns=["epoch", "t_mid", "depth", "err", "sigma_local", "coverage"])
     pt["snr"] = pt["depth"] / pt["err"]
     return pt
 
@@ -223,10 +247,15 @@ def _combine(pt) -> float:
     return float((pt["depth"] * w).sum() / w.sum() * np.sqrt(w.sum()))
 
 
-def _survival(pt, drop) -> float:
-    """SNR kept after removing the rows in `drop`, relative to the sqrt(N) expectation (0 if < 2 kept)."""
+def _survival(pt, drop, min_keep: int = 1) -> float:
+    """SNR kept after removing the rows in `drop`, relative to the sqrt(N) expectation (0 if < min_keep kept).
+
+    min_keep = 1 for the single-event test: a 2-transit signal must keep half its SNR in the weaker
+    transit (requiring 2 kept rejected every 2-transit planet; found by injection-recovery).
+    min_keep = 2 for the momentum-dump test: at least two transits must lie away from the dumps.
+    """
     keep = pt[~drop]
-    if len(keep) < THRESH["n_transits_min"]:
+    if len(keep) < min_keep:
         return 0.0
     return float(_combine(keep) / (_combine(pt) * np.sqrt(len(keep) / len(pt))))
 
@@ -322,7 +351,7 @@ def vet_one(
 
         # --- per-transit: combined SNR, single-event dominance, momentum dumps ---
         def transit_tests():
-            pt = _per_transit(t, y, in_tr, epoch, T0, P, err1)
+            pt = _per_transit(t, y, in_tr, oot, epoch, T0, P, dur, beta, sigma)
             row.n_transits_used = len(pt)
             if len(pt) == 0:
                 return
@@ -335,7 +364,10 @@ def vet_one(
                 if len(dumps) else np.zeros(len(pt), bool)
             )
             row.n_near_dump = int(near.sum())
-            row.dump_survival = _survival(pt, near) if near.any() else 1.0
+            row.dump_survival = _survival(pt, near, min_keep=THRESH["n_transits_min"]) if near.any() else 1.0
+            edge = (pt["coverage"] < EDGE_COVERAGE_MIN).to_numpy()
+            row.n_edge = int(edge.sum())
+            row.edge_survival = _survival(pt, edge, min_keep=THRESH["n_transits_min"]) if edge.any() else 1.0
 
         attempt("transits", transit_tests)
 
@@ -378,6 +410,15 @@ def vet_one(
             row.var_amp_ppm = float(amp * 1e6)
             row.var_period_ratio = float(P * f_peak)
             row.var_amp_frac = float(amp / depth) if depth > 0 else np.nan
+            row.var_fap = float(ls.false_alarm_probability(power.max(), minimum_frequency=1 / 13,
+                                                           maximum_frequency=1 / 0.02))
+            # harmonic matching in FREQUENCY: a periodogram peak is only located to ~1/baseline
+            baseline = float(t[oot].max() - t[oot].min())
+            f_tls = 1 / P
+            cands = [(n, abs(f_peak - n * f_tls)) for n in range(1, THRESH["var_harmonic_n_max"] + 1)]
+            cands += [(-n, abs(f_tls - n * f_peak)) for n in range(2, THRESH["var_harmonic_n_max"] + 1)]
+            n_best, off = min(cands, key=lambda x: x[1])
+            row.var_harmonic_n, row.var_harmonic_offset = float(n_best), float(off * baseline)
 
         attempt("variability", variability)
 
@@ -453,20 +494,21 @@ def apply_thresholds(df: pd.DataFrame, thresh: dict = THRESH) -> pd.DataFrame:
     )
     df["pass_single_event"] = (df["single_event_survival"] >= thresh["survive_frac"]) | nan("single_event_survival")
     df["pass_momentum_dump"] = (df["dump_survival"] >= thresh["survive_frac"]) | nan("dump_survival")
+    df["pass_data_edges"] = (df["edge_survival"] >= thresh["survive_frac"]) | nan("edge_survival")
     df["pass_odd_even"] = ~(df["odd_even_sigma"] > thresh["odd_even_sigma_max"])
     df["pass_secondary"] = ~(df["secondary_snr"] >= thresh["secondary_snr_max"])
     df["pass_duration"] = df["duration_ratio"].between(thresh["dur_ratio_min"], thresh["dur_ratio_max"]) | nan(
         "duration_ratio"
     )
     df["pass_radius"] = ~(df["rp_earth"] > thresh["rp_earth_max"])
-    r = df["var_period_ratio"].where(df["var_period_ratio"] >= 1, 1 / df["var_period_ratio"])
-    n = r.round()
-    harmonic = (n >= 1) & (n <= thresh["var_harmonic_n_max"]) & ((r - n).abs() / r < thresh["var_harmonic_tol"])
-    df["pass_variability"] = ~(harmonic & (df["var_amp_frac"] >= thresh["var_amp_frac_max"]))
+    significant = df["var_fap"] < thresh["var_fap_max"]
+    harmonic = df["var_harmonic_offset"] < thresh["var_harmonic_tol"]
+    df["pass_variability"] = ~(significant & harmonic & (df["var_amp_frac"] >= thresh["var_amp_frac_max"]))
 
     df["flag_v_shaped"] = df["trap_flat_frac"] < thresh["v_shape_max"]
     df["flag_centroid"] = df["centroid_sigma"] > thresh["centroid_sigma_max"]
     df["flag_contamination"] = df["contratio"] > thresh["contratio_max"]
+    df["flag_variable_star"] = significant & (df["var_amp_frac"] >= thresh["variable_amp_frac"])
 
     hard = df[[f"pass_{k}" for k in HARD]]
     soft = df[[f"flag_{k}" for k in SOFT]]

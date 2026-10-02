@@ -84,6 +84,20 @@ def test_single_event_fails(tmp_path, star, rng):
     assert not out["pass_single_event"]
 
 
+def test_two_transit_planet_passes_single_event(tmp_path, star, rng):
+    """Regression (2026-10-02, found by injection-recovery): with 2 transits, dropping the stronger
+    one left fewer than 2 and the test returned 0, rejecting every planet with P > ~8 d."""
+    t = time_grid()
+    P, T0 = 11.0, 4181.5
+    model, depth, dur_h = transit_model(t, P, T0, 3.0, 0.2, RAD, MASS, CADENCE)
+    flux = model + rng.normal(0, NOISE, len(t))
+    sig = make_sig(P, T0, dur_h, depth, 3.0 / (RAD * 109.08), n_transits=2)
+    out = vet_table(sig, vet_one(1, sig, star, write_lc(tmp_path, t, flux), None, NO_DUMPS)).iloc[0]
+    assert out["n_transits_used"] == 2
+    assert out["single_event_survival"] > 0.5
+    assert out["pass_single_event"], out["failed"]
+
+
 def test_momentum_dump_dominated_signal_fails(tmp_path, star, rng):
     """'Transits' that exist only next to momentum dumps."""
     t = time_grid()
@@ -97,12 +111,65 @@ def test_momentum_dump_dominated_signal_fails(tmp_path, star, rng):
     assert not out["pass_momentum_dump"]
 
 
+def test_transits_at_data_edges_fail(tmp_path, star, rng):
+    """'Transits' that sit right at the start of data segments (ramps after gaps) are not trusted."""
+    t = time_grid()
+    t = t[((t - 4180.0) % 3.0) > 0.4]  # 0.4-d gaps every 3 days
+    flux = 1 + rng.normal(0, NOISE, len(t))
+    starts = t[np.r_[0, np.where(np.diff(t) > 0.1)[0] + 1]]
+    for s0 in starts:  # a dip in the first hour of every segment
+        flux[(t >= s0) & (t < s0 + 1 / 24)] -= 0.004
+    sig = make_sig(3.0, starts[1] + 0.5 / 24, 1.0, 0.004, 0.06, n_transits=8)
+    out = vet_table(sig, vet_one(1, sig, star, write_lc(tmp_path, t, flux), None, NO_DUMPS)).iloc[0]
+    assert out["n_edge"] >= 6
+    assert not out["pass_data_edges"]
+
+
+def test_local_noise_downweights_transit_in_noisy_stretch(planet, star, tmp_path):
+    """The same planet, with one day of 10x noise around one transit: that transit's error grows."""
+    sig, path, (P, T0, dur_h, depth) = planet
+    lc = pd.read_parquet(path)
+    noisy = np.abs(lc["time"] - (T0 + 3 * P)) < 0.5
+    rng = np.random.default_rng(1)
+    lc.loc[noisy, "flux"] += rng.normal(0, 10 * NOISE, noisy.sum())
+    lc.to_parquet(tmp_path / "noisy.parquet", index=False)
+    from src.vet import _per_transit, _phase_time
+
+    t, y = lc["time"].to_numpy(), lc["flux"].to_numpy()
+    dt = _phase_time(t, P, T0)
+    dur = dur_h / 24
+    pt = _per_transit(t, y, np.abs(dt) < dur / 2, np.abs(dt) > dur, np.round((t - T0) / P).astype(int),
+                      T0, P, dur, 1.0, NOISE)
+    err = pt.set_index("epoch")["err"]
+    assert err.loc[3] > 5 * err.drop(3).median()
+
+
+def test_variability_matches_harmonics_in_frequency(tmp_path, star, rng):
+    """A 2.10-d spot modulation found by TLS at 2.09 d (0.5 % off) is still recognised: the
+    periodogram only locates the peak to ~1/baseline in frequency (~8 % in period here)."""
+    t = time_grid()
+    flux = 1 + 0.003 * np.sin(2 * np.pi * t / 2.10) + rng.normal(0, NOISE, len(t))
+    sig = make_sig(2.09, 4180.0 + 0.75 * 2.10, 2.4, 0.004, 0.05)
+    out = vet_table(sig, vet_one(1, sig, star, write_lc(tmp_path, t, flux), None, NO_DUMPS)).iloc[0]
+    assert out["var_fap"] < 1e-3
+    assert out["var_harmonic_offset"] < 1
+    assert not out["pass_variability"]
+
+
+def test_planet_on_quiet_star_is_not_called_variable(planet, star):
+    sig, path, _ = planet
+    out = vet_table(sig, vet_one(1, sig, star, path, None, NO_DUMPS)).iloc[0]
+    assert out["var_fap"] > 1e-3  # nothing but white noise once the transits are masked
+    assert out["pass_variability"] and not out["flag_variable_star"]
+
+
 def test_nan_metric_passes_by_convention():
     """A test that could not be evaluated must not reject the signal."""
     row = {"status": "ok", "SDE": 20.0, "snr_tls": 20.0, "distinct_transit_count": 5, "period": 1.0,
            "period_max": 12.0, "period_unc": 0.001, "snr": 20.0}
-    metrics = ["single_event_survival", "dump_survival", "odd_even_sigma", "secondary_snr", "duration_ratio",
-               "rp_earth", "var_period_ratio", "var_amp_frac", "trap_flat_frac", "centroid_sigma", "contratio"]
+    metrics = ["single_event_survival", "dump_survival", "edge_survival", "odd_even_sigma", "secondary_snr",
+               "duration_ratio", "rp_earth", "var_fap", "var_harmonic_offset", "var_amp_frac", "trap_flat_frac",
+               "centroid_sigma", "contratio"]
     out = apply_thresholds(pd.DataFrame([{**row, **{m: np.nan for m in metrics}}])).iloc[0]
     assert out["passes_all"]
     assert out["n_flags"] == 0

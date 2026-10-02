@@ -12,7 +12,7 @@ of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sect
 | 2 | `src/fetch.py` | download light curves (SPOC 2-min, else QLP FFI) | `data/lc_raw/`, `sector_N_manifest.parquet` |
 | 3 | `src/detrend.py` | normalise, clip flares, biweight-flatten, trim orbit edges | `data/lc_flat/{tic}.parquet` |
 | 4 | `src/search.py` | Transit Least Squares on every light curve, no threshold | `data/search/sector_N.parquet` |
-| 5 | `src/vet.py` | 11 hard physical tests + 3 soft flags per signal | `data/search/sector_N_vetted.parquet` |
+| 5 | `src/vet.py` | 12 hard physical tests + 4 soft flags per signal | `data/search/sector_N_vetted.parquet` |
 | 6 | `src/known.py` | cross-match with TOI, CTOI, confirmed planets, TESS & Gaia EBs, neighbours | `data/search/sector_N_known.parquet` |
 | 7 | `src/report.py` | one PDF page per candidate + run summary | `data/reports/sector_N.pdf` |
 | — | `src/inject.py` | injection-recovery: completeness of steps 3–5 | `data/injection/sector_N_injrec.parquet` |

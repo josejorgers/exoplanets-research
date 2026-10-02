@@ -5,6 +5,53 @@ Newest first. Each entry says how to re-check it.
 
 ---
 
+## 2026-10-02 — Vetting v2: four changes motivated by the by-eye review of the report
+
+Reviewing the 32 "new" candidates page by page (`docs/REVIEW_sector104.md`) showed failure
+modes the v1 tests missed. Each change is tested in `tests/test_vet.py`:
+
+1. **Variability, harmonic matching in frequency.** A Lomb–Scargle peak is located only to
+   ~1/baseline in frequency (~8 % in period at P = 2 d over 25 d). The v1 rule ("period ratio
+   within 0.5 % of an integer") let obvious rotators through at 0.7 % and 1.3 % (TIC 32355300,
+   TIC 183589961). Now: |f_var − n f_tls| (or |f_tls − n f_var|) < 1/baseline.
+2. **Variability, significance.** v1 used any peak, however weak. TIC 161313862 (a clean-looking
+   transit on a flat light curve) was rejected because of a power-0.003 peak (white-noise FAP
+   ~2 %). Now the peak must have FAP < 10⁻³. New soft flag `variable_star`: a significant
+   modulation ≥ 30 % of the depth at *any* period (TIC 160188205 has one at a non-harmonic
+   period).
+3. **New hard test `data_edges`.** Several "transits" sat at segment starts, right after gaps or
+   just before momentum dumps (TIC 119624569: both transits 0.2–0.3 d before a dump, with data
+   on one side only). Each transit now needs ≥ 50 % of the expected points on *both* sides
+   (window max(duration, 1 h)), and the signal must survive dropping those that don't (same
+   survival rule as the dump test, ≥ 2 transits left). In addition, the momentum-dump window
+   grew from ±0.1 d to **±0.25 d**: the 0.5-d biweight smears a flux step over ±window/2, the
+   same reasoning as `edge_trim`.
+4. **Local noise per transit.** v1 gave every transit the global noise level. A transit in a
+   stretch of strong scattered light (TIC 49143293) then looked as significant as one in quiet
+   data. Now each transit's error uses the out-of-transit scatter within ±0.5 d (floored at half
+   the global scatter). This SNR (`snr`, ours) is now often well below TLS's `snr_tls` for
+   systematics-dominated signals (TIC 49143293: 5.4 vs 8.5). Which one the SNR threshold should
+   use is decided with injection-recovery (notebook 8).
+
+**Effect on sector 104:** 44 signals pass (was 52), and all 8 known planets still pass.
+Injections are now re-run with stored light curves (`data/injection/lc/`), so future vetting
+changes only need `python -m src.inject --revet` (minutes), not a new TLS run (hours).
+
+## 2026-10-02 — Single-event test rejected every 2-transit signal (found by injection-recovery)
+
+**Bug.** `_survival()` returned 0 whenever fewer than 2 transits were left after dropping the
+suspect ones. For the single-event test, which drops the strongest transit, a 2-transit signal
+always kept 1, so every planet with P ≳ 8 d failed. In the first 132 injections, 8 correctly
+found planets (expected SNR 9–58) were rejected this way, and none were rejected for any other
+reason.
+
+**Fix.** `min_keep = 1` for the single-event test (the weaker transit must carry half its
+expected SNR) and `min_keep = 2` for the momentum-dump test (two transits must lie away from the
+dumps). Regression test: `test_two_transit_planet_passes_single_event`.
+
+**Effect on sector 104.** 52 signals pass vetting (was 49). The 18 injections with 2 transits
+were re-run with the fixed code.
+
 ## 2026-10-02 — The 0.5-day biweight keeps ~90 % of short transits, ~75 % of 2.5-h ones
 
 **Check** (`tests/test_detrend_inject.py`; plan §5 sanity check, not done before). A 2-mmag

@@ -160,7 +160,7 @@ def panel_fold(ax, lc, s, tls):
     ax.set_xlim(-w, w)
     ax.set_ylim(*_ylim_for(lc["flux"].values[np.abs(x) < s.duration_h / 2], s.depth_ppm / 1e6))
     ax.set_xlabel("hours from mid-transit", fontsize=7)
-    ax.set_title("3. fold, binned (blue), TLS model (red)", fontsize=8, loc="left")
+    ax.set_title("3. fold: binned (blue),\nTLS model (red)", fontsize=8, loc="left")
 
 
 def panel_odd_even(ax, lc, s):
@@ -177,7 +177,7 @@ def panel_odd_even(ax, lc, s):
     ax.set_ylim(*_ylim_for(y[np.abs(x) < s.duration_h / 2], s.depth_ppm / 1e6))
     ax.legend(fontsize=6, loc="lower right")
     ax.set_xlabel("hours from mid-transit", fontsize=7)
-    ax.set_title(f"4. odd vs even: {s.odd_even_sigma:.1f}σ", fontsize=8, loc="left")
+    ax.set_title(f"4. odd (blue) vs even (red):\n{s.odd_even_sigma:.1f}σ apart", fontsize=8, loc="left")
 
 
 def panel_secondary(ax, lc, s):
@@ -193,7 +193,7 @@ def panel_secondary(ax, lc, s):
     ax.set_ylim(*_ylim_for(y[np.abs(xt) < s.duration_h / 2], s.depth_ppm / 1e6))
     ax.set_xlim(-w, w)
     ax.set_xlabel("hours from phase 0.5", fontsize=7)
-    ax.set_title(f"5. phase 0.5; max dip anywhere {s.secondary_snr:.1f}σ @ {s.secondary_phase:.2f}",
+    ax.set_title(f"5. phase 0.5 (worst dip: {s.secondary_snr:.1f}σ\nat phase {s.secondary_phase:.2f})",
                  fontsize=8, loc="left")
 
 
@@ -220,7 +220,8 @@ def panel_table(ax, s, d):
         ("odd/even [σ]", s.odd_even_sigma, "odd_even"), ("secondary [σ]", s.secondary_snr, "secondary"),
         ("dur / expected", s.duration_ratio, "duration"), ("Rp [R⊕]", s.rp_earth, "radius"),
         ("var amp / depth", s.var_amp_frac, "variability"), ("1-event survival", s.single_event_survival, "single_event"),
-        ("dump survival", s.dump_survival, "momentum_dump"), ("SNR (TLS)", s.snr_tls, "snr"), ("SDE", s.SDE, "sde"),
+        ("dump survival", s.dump_survival, "momentum_dump"), ("edge survival", s.edge_survival, "data_edges"),
+        ("SNR (TLS)", s.snr_tls, "snr"), ("SDE", s.SDE, "sde"),
     ]
     lines = ["hard tests", "-" * 28]
     for label, val, key in rows:
@@ -230,11 +231,8 @@ def panel_table(ax, s, d):
     lines.append(f"{'⚑' if s.flag_v_shaped else ' '} T23/T14       {s.trap_flat_frac:9.2f}")
     lines.append(f"{'⚑' if s.flag_centroid else ' '} centroid [σ]  {s.centroid_sigma:9.1f}")
     lines.append(f"{'⚑' if s.flag_contamination else ' '} contratio     {s.contratio:9.2f}")
-    lines += ["", "planet (circular orbit)", "-" * 28,
-              f"a = {d['a_au']:.4f} au = {d['a_rs']:.1f} R*",
-              f"S = {d['insolation_earth']:.1f} S⊕   Teq = {d['teq_k']:.0f} K",
-              f"β = {s.beta:.2f}   N transits = {s.n_transits_used}"]
-    ax.text(0, 1, "\n".join(lines), va="top", ha="left", family="DejaVu Sans Mono", fontsize=6.6,
+    lines.append(f"{'⚑' if s.flag_variable_star else ' '} var FAP       {s.var_fap:9.1e}")
+    ax.text(0, 1.05, "\n".join(lines), va="top", ha="left", family="DejaVu Sans Mono", fontsize=6.6,
             transform=ax.transAxes)
 
 
@@ -242,7 +240,7 @@ def candidate_page(s, star, lc: pd.DataFrame, tls: dict | None, dumps, rank: int
     """One figure (US letter, portrait) for one signal. s = row of the known table, star = target row."""
     d = derived(s.period, star.rad, star.mass, star.teff)
     fig = plt.figure(figsize=(8.5, 11))
-    gs = fig.add_gridspec(5, 3, height_ratios=[0.55, 1, 1, 1.25, 1.25], hspace=0.55, wspace=0.32,
+    gs = fig.add_gridspec(5, 3, height_ratios=[0.7, 1, 1, 1.25, 1.25], hspace=0.6, wspace=0.32,
                           left=0.07, right=0.97, top=0.97, bottom=0.04)
     head = fig.add_subplot(gs[0, :])
     head.axis("off")
@@ -258,7 +256,11 @@ def candidate_page(s, star, lc: pd.DataFrame, tls: dict | None, dumps, rank: int
               f"star: Tmag {star.tmag:.2f}   Teff {star.teff:.0f} K   R {star.rad:.3f} R☉   M {star.mass:.3f} M☉   "
               f"d {star.dist_pc:.1f} pc   contratio {star.contratio:.2f}", fontsize=8.5, va="top")
     color = "C2" if s.passes_all and s.known_class in ("new", "new_in_known_system") else "C3" if not s.passes_all else "C1"
-    head.text(0, 0.1, f"{verdict}   |   flags: {s.flags or '-'}   |   {known}", fontsize=8, va="top", color=color)
+    head.text(0, 0.1, f"{verdict}   |   flags: {s['flags'] or '-'}   |   {known}", fontsize=8, va="top", color=color)
+    head.text(0, -0.16,
+              f"planet if circular: a = {d['a_au']:.4f} au = {d['a_rs']:.1f} R*   S = {d['insolation_earth']:.1f} S⊕   "
+              f"Teq = {d['teq_k']:.0f} K   (β = {s.beta:.2f}, {s.n_transits_used} transits with data)",
+              fontsize=8, va="top")
     head.text(1, 1, f"exofop.ipac.caltech.edu/tess/target.php?id={s.tic_id}", fontsize=7, ha="right", va="top",
               color="C0")
 

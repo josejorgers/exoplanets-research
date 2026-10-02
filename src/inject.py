@@ -3,6 +3,7 @@
 Usage:
     uv run python -m src.inject --n 1000 --n-jobs 11      # sector from .env; resumable
     uv run python -m src.inject --n 50 --seed 1           # a quick test
+    uv run python -m src.inject --revet --n-jobs 11       # recompute vet metrics after changing src/vet.py
 
 For each injection: pick a random star whose real signal did NOT pass vetting, read its raw light
 curve with the same code as src.detrend (load_raw), multiply in a limb-darkened batman transit
@@ -13,6 +14,8 @@ applied here (they are applied in the analysis, so they can be tuned on the stor
 Output: data/injection/sector_{N}_injrec.parquet — one row per injection: injected parameters,
 expected SNR, the TLS result (search columns, snr -> snr_tls), every vet metric.
 Written after every chunk, so an interrupted run resumes where it stopped.
+The injected, flattened light curves are kept in data/injection/lc/{inj_id}.parquet (~0.3 MB
+each) so that --revet can recompute the vet metrics without re-running TLS.
 
 Analysis and threshold tuning: notebooks/pipeline-8-injection-recovery.ipynb
 """
@@ -108,12 +111,12 @@ def transit_model(t: np.ndarray, P: float, t0: float, rp_earth: float, b: float,
     return flux, depth, dur_h
 
 
-def inject_one(inj: dict, dumps: np.ndarray, tmp_dir: Path) -> dict:
+def inject_one(inj: dict, dumps: np.ndarray, lc_dir: Path) -> dict:
     """Inject one transit, run detrend -> search -> vet on it, return everything. Never raises."""
     _worker_logging()
     out = dict(inj)
     t_start = time.time()
-    tmp = tmp_dir / f"{inj['inj_id']}.parquet"
+    tmp = lc_dir / f"{inj['inj_id']}.parquet"
     try:
         t, f, e, _ = load_raw(inj["raw_file"])
         cadence = float(np.median(np.diff(t)))
@@ -141,9 +144,7 @@ def inject_one(inj: dict, dumps: np.ndarray, tmp_dir: Path) -> dict:
         out.update(s)
         if s["search_status"] == "ok":
             star = {"rad": inj["rad"], "mass": inj["mass"], "contratio": inj.get("contratio", np.nan)}
-            v = asdict(vet_one(inj["tic_id"], s, star, str(tmp), inj["raw_file"], dumps))
-            v.pop("tic_id")
-            out.update(v)
+            out.update(_vet_metrics(inj, s, str(tmp), dumps))
         out["inj_runtime_s"] = time.time() - t_start
         log.info(
             "inj %d TIC %d: P %.3f d, Rp %.2f Re, depth %.0f ppm, SNR_exp %.1f -> TLS P %.3f d SDE %.1f",
@@ -154,9 +155,40 @@ def inject_one(inj: dict, dumps: np.ndarray, tmp_dir: Path) -> dict:
         out["inj_error"] = f"{type(ex).__name__}: {ex}"
         out["inj_runtime_s"] = time.time() - t_start
         log.error("inj %d failed: %s", inj["inj_id"], out["inj_error"])
-    finally:
-        tmp.unlink(missing_ok=True)
     return out
+
+
+def _vet_metrics(inj: dict, s: dict, lc_path: str, dumps: np.ndarray) -> dict:
+    star = {"rad": inj["rad"], "mass": inj["mass"], "contratio": inj.get("contratio", np.nan)}
+    v = asdict(vet_one(inj["tic_id"], s, star, lc_path, inj["raw_file"], dumps))
+    v.pop("tic_id")
+    return v
+
+
+def revet_one(row: dict, dumps: np.ndarray, lc_dir: Path) -> dict:
+    """Recompute the vet metrics of one stored injection (after src/vet.py changed)."""
+    _worker_logging()
+    path = lc_dir / f"{row['inj_id']}.parquet"
+    if row.get("search_status") != "ok" or not path.exists():
+        return {"inj_id": row["inj_id"]}
+    return {"inj_id": row["inj_id"], **_vet_metrics(row, row, str(path), dumps)}
+
+
+def revet_sector(sector: int, n_jobs: int = 8) -> pd.DataFrame:
+    out_path = INJ_DIR / f"sector_{sector}_injrec.parquet"
+    done = pd.read_parquet(out_path)
+    manifest = pd.read_parquet(DATA_DIR / "targets" / f"sector_{sector}_manifest.parquet")
+    dumps = momentum_dumps(manifest)
+    log.info("re-vetting %d stored injections (%d workers)", len(done), n_jobs)
+    rows = joblib.Parallel(n_jobs=n_jobs)(
+        joblib.delayed(revet_one)(r, dumps, INJ_DIR / "lc") for r in done.to_dict("records")
+    )
+    new = pd.DataFrame(rows)
+    keep = [c for c in done.columns if c not in new.columns or c == "inj_id"]
+    done = done[keep].merge(new, on="inj_id", how="left")
+    done.to_parquet(out_path, index=False)
+    log.info("wrote %s", out_path)
+    return done
 
 
 def recovery_flags(df: pd.DataFrame, period_tol: float = 0.01) -> pd.DataFrame:
@@ -200,8 +232,8 @@ def inject_sector(
     plan = draw_injections(stars, n, seed, p_range, rp_range)
 
     out_path = INJ_DIR / f"sector_{sector}_injrec.parquet"
-    tmp_dir = INJ_DIR / "tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    lc_dir = INJ_DIR / "lc"
+    lc_dir.mkdir(parents=True, exist_ok=True)
     done = pd.read_parquet(out_path) if out_path.exists() else pd.DataFrame(columns=["inj_id"])
     todo = plan[~plan["inj_id"].isin(done["inj_id"])]
     dumps = momentum_dumps(manifest)
@@ -211,7 +243,7 @@ def inject_sector(
     for start in range(0, len(todo), chunk):
         part = todo.iloc[start:start + chunk]
         rows = joblib.Parallel(n_jobs=n_jobs)(
-            joblib.delayed(inject_one)(r._asdict(), dumps, tmp_dir) for r in part.itertuples(index=False)
+            joblib.delayed(inject_one)(r._asdict(), dumps, lc_dir) for r in part.itertuples(index=False)
         )
         done = pd.concat([done, pd.DataFrame(rows)], ignore_index=True) if len(done) else pd.DataFrame(rows)
         done = done.sort_values("inj_id").reset_index(drop=True)
@@ -235,6 +267,7 @@ def main() -> None:
     p.add_argument("--p-max", type=float, default=12.0)
     p.add_argument("--rp-min", type=float, default=0.5, help="Earth radii")
     p.add_argument("--rp-max", type=float, default=6.0, help="Earth radii")
+    p.add_argument("--revet", action="store_true", help="only recompute vet metrics of stored injections")
     a = p.parse_args()
     if a.sector is None:
         p.error("no --sector given and SECTOR not set in .env")
@@ -242,7 +275,10 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     logging.getLogger("lightkurve").setLevel(logging.ERROR)
-    inject_sector(a.sector, a.n, a.n_jobs, a.seed, (a.p_min, a.p_max), (a.rp_min, a.rp_max))
+    if a.revet:
+        revet_sector(a.sector, a.n_jobs)
+    else:
+        inject_sector(a.sector, a.n, a.n_jobs, a.seed, (a.p_min, a.p_max), (a.rp_min, a.rp_max))
 
 
 if __name__ == "__main__":
