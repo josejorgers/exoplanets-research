@@ -53,8 +53,10 @@ DATA_DIR = Path(
 SEARCH_DIR = DATA_DIR / "search"
 
 THRESH = dict(
-    sde_min=9.0,  # TLS white-noise FAP ~1e-4
-    snr_min=7.0,  # Kepler/TESS 7.1 sigma convention; TOI-122 b (snr 5.6 in s104) fails this
+    # sde_min / snr_min chosen with injection-recovery (notebook 8): SDE >= 10 with SNR_TLS >= 6.5 dominates the
+    # textbook SDE >= 9 / SNR >= 7 on sector 104 (completeness 79.2 % vs 76.4 %, 40 vs 42 real signals passing)
+    sde_min=10.0,
+    snr_min=6.5,  # TOI-122 b (snr 5.6 in s104) still fails
     snr_column="snr_tls",  # which SNR the threshold applies to: TLS's (white noise) or ours ("snr": local, red noise)
     n_transits_min=2,  # periodicity needs at least two events with data
     grid_edge_frac=0.98,  # period within 2 % of period_max = peak at the grid edge

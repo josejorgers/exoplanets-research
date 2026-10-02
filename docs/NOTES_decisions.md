@@ -5,6 +5,34 @@ Newest first. Each entry says how to re-check it.
 
 ---
 
+## 2026-10-02 — Thresholds from injection-recovery: SDE ≥ 10, SNR_TLS ≥ 6.5
+
+**Data.** 1,000 injections (`src/inject.py`, sector 104, P 0.3–12 d and Rp 0.5–6 R⊕
+log-uniform, b uniform 0–0.9), re-vetted with the final `vet.py`. Analysis in
+`notebooks/pipeline-8-injection-recovery.ipynb`.
+
+**Pipeline sensitivity.** The search finds 50 % of injected planets at an expected SNR of 7.0
+(plateau 94.6 %). After vetting, 50 % survive at an expected SNR of 9.5 (plateau 88.8 %). The plan
+goal "> 80 % recovery at 3 mmag, P < 10 d" is **not met**: 72 % found and vetted, 80 % found
+by the search alone.
+
+**Threshold choice.** A grid of SNR column (TLS's / ours) × snr_min (5–8) × sde_min (8, 9, 10)
+was scored by completeness (injections with expected SNR ≥ 7 that are found and pass) and by the
+number of real sector-104 signals passing (almost all false positives, per the review). Two
+settings dominate the textbook SDE ≥ 9 / SNR ≥ 7 (76.4 %, 42 real): SNR_TLS ≥ 6.5 with SDE ≥ 10
+(**79.2 %, 40**, chosen as the most complete of the two) and our SNR ≥ 6.5 with SDE ≥ 10
+(77.6 %, 39). Raising SDE from 9 to 10 costs injected planets almost nothing (≤ 1 %), because
+injected planets that clear the SNR cut have high SDE anyway, while it removes real junk.
+
+**Check against the by-eye review.** The new thresholds remove 4 of the 21 previously passing
+"new" candidates, and 3 of the 4 were graded D (TIC 49143293, 308210382, 631919622; the
+fourth, 389683926, was a C). They add one (TIC 64336445). All 8 known planets still pass
+(lowest SDE 12.3, TOI-244 b). TOI-122 b still fails (SNR_TLS 5.6).
+
+**Not chosen: our SNR.** The local-noise, red-noise-corrected SNR is more honest per signal
+(TIC 49143293: 5.4 vs 8.5) but, at equal false-alarm cost, slightly less complete. It is kept as
+a metric and selectable with `--snr-column snr`.
+
 ## 2026-10-02 — New hard test `transit_noise` (glitch-driven signals)
 
 **Seen in the review** (`docs/REVIEW_sector104.md`, rank 7): TIC 394134586 passed all v2 tests

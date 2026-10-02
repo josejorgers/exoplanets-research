@@ -115,8 +115,10 @@ def sector_search(ms: pd.DataFrame, P: float, rad: float, mass: float, discovery
                   window: float = 0.02, threads: int = 1) -> pd.DataFrame:
     """TLS restricted to P*(1 +- window): per sector, all but the discovery sector, and all sectors.
 
-    In a narrow window the look-elsewhere effect is small, so a real transit shows up with a high
-    SDE in every sector where it has enough transits; noise or a one-sector systematic does not.
+    In a narrow window the look-elsewhere effect is small, so a real transit comes back at the same
+    period with a significant SNR in the independent sectors; noise or a one-sector systematic does
+    not. Judge by `snr`, not `SDE`: in a +-2 % window the "rest of the periodogram" that SDE compares
+    against is mostly the wings of the peak itself, so SDE is not meaningful there.
     """
     groups = [(f"s{s:03d}", g) for s, g in ms.groupby("sector")]
     groups += [("all but discovery", ms[ms["sector"] != discovery_sector]), ("all sectors", ms)]
@@ -164,7 +166,7 @@ def _models(params_list, groups):
 
 
 def fit_transit(ms: pd.DataFrame, P: float, T0: float, dur_h: float, depth_ppm: float, rad: float, mass: float,
-                nwalkers: int = 32, nsteps: int = 3000, seed: int = 0) -> tuple[dict, np.ndarray]:
+                nwalkers: int = 32, nsteps: int = 2500, seed: int = 0) -> tuple[dict, np.ndarray]:
     """batman + emcee fit. Parameters: T0, P, k = Rp/R*, b, log10(a/R*), q1, q2 (Kipping 2013 limb darkening).
 
     Uniform priors (k in [0, 0.5], b in [0, 1+k], a/R* in [1.5, 200], q1, q2 in [0, 1]), circular

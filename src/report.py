@@ -233,7 +233,7 @@ def panel_table(ax, s, d):
     lines.append(f"{'⚑' if s.flag_centroid else ' '} centroid [σ]  {s.centroid_sigma:9.1f}")
     lines.append(f"{'⚑' if s.flag_contamination else ' '} contratio     {s.contratio:9.2f}")
     lines.append(f"{'⚑' if s.flag_variable_star else ' '} var FAP       {s.var_fap:9.1e}")
-    ax.text(0, 1.05, "\n".join(lines), va="top", ha="left", family="DejaVu Sans Mono", fontsize=6.6,
+    ax.text(0, 1.08, "\n".join(lines), va="top", ha="left", family="DejaVu Sans Mono", fontsize=6.0,
             transform=ax.transAxes)
 
 
