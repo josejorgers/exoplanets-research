@@ -81,6 +81,74 @@ def edge_mask(time: np.ndarray, edge_trim: float, gap: float = 0.5) -> np.ndarra
     return keep
 
 
+def load_raw(raw_file: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """Steps 1-2 of detrending: read, quality-mask, drop NaNs, normalize to 1, clip upward outliers.
+
+    Returns (time [BTJD], flux, flux_err, n_in) where n_in counts the points before clipping.
+    Also used by src.inject, which multiplies `flux` by a transit model before flatten_lc().
+    """
+    # 1. read (lightkurve applies the quality bitmask chosen at download), drop NaN flux, normalize to 1
+    lc = lk.read(raw_file)
+    # QLP flags bad cadences with bit 31 (2^30 = 1073741824), which lightkurve's default TESS
+    # bitmask does not know about -> ~20 % junk points (flux ~0) survive unless we keep quality == 0.
+    # SPOC files already had the "default" bitmask applied at download; leave them as they are.
+    if str(lc.meta.get("AUTHOR", "")).upper() == "QLP":
+        lc = lc[lc.quality.value == 0]
+    lc = lc.remove_nans()
+    n_in = len(lc)
+    if n_in < 100:  # a few QLP files contain only NaN flux
+        return np.array([]), np.array([]), np.array([]), n_in
+    lc = lc.normalize()
+    # 2. clip UPWARD outliers only (flares, cosmic rays). Never clip downward: those are the transits.
+    lc = lc.remove_outliers(sigma_upper=4, sigma_lower=np.inf)
+    # time in BTJD = BJD - 2457000
+    return lc.time.value, lc.flux.value.astype(float), lc.flux_err.value.astype(float), n_in
+
+
+def flatten_lc(
+    time: np.ndarray,
+    flux: np.ndarray,
+    flux_err: np.ndarray,
+    window_length: float = 0.5,
+    edge_trim: float = 0.25,
+) -> tuple[pd.DataFrame, int]:
+    """Steps 3-4 of detrending: wotan biweight flatten, then trim orbit edges.
+
+    Returns (DataFrame with time, flux, flux_err, trend, flux_raw; number of edge-trimmed points).
+    """
+    # 3. wotan returns plain numpy arrays: (flattened_flux, trend) with return_trend=True.
+    flat, trend = wotan.flatten(
+        time,
+        flux,
+        method="biweight",
+        window_length=window_length,
+        return_trend=True,
+    )
+    # biweight leaves NaN where the window has too few points (edges, gaps) — drop them
+    good = np.isfinite(flat)
+    # 4. drop the first/last edge_trim days of each orbit, where the window was one-sided (see edge_mask)
+    keep = edge_mask(time, edge_trim)
+    n_trimmed = int((good & ~keep).sum())
+    good &= keep
+
+    # QLP files carry NaN flux_err for the SAP flux; fall back to a robust scatter estimate
+    bad_err = ~np.isfinite(flux_err)
+    if bad_err.any():
+        mad = np.nanmedian(np.abs(flat[good] - np.nanmedian(flat[good])))
+        flux_err = np.where(bad_err, 1.4826 * mad, flux_err)
+
+    out = pd.DataFrame(
+        {
+            "time": time[good],
+            "flux": flat[good],
+            "flux_err": flux_err[good],
+            "trend": trend[good],
+            "flux_raw": flux[good],
+        }
+    )
+    return out, n_trimmed
+
+
 def detrend_one(
     tic_id: int, raw_file: str, window_length: float = 0.5, edge_trim: float = 0.25
 ) -> DetrendRow:
@@ -88,58 +156,13 @@ def detrend_one(
     _worker_logging()
     row = DetrendRow(tic_id=tic_id)
     try:
-        # 1. read (lightkurve applies the quality bitmask chosen at download), drop NaN flux, normalize to 1
-        lc = lk.read(raw_file)
-        # QLP flags bad cadences with bit 31 (2^30 = 1073741824), which lightkurve's default TESS
-        # bitmask does not know about -> ~20 % junk points (flux ~0) survive unless we keep quality == 0.
-        # SPOC files already had the "default" bitmask applied at download; leave them as they are.
-        if str(lc.meta.get("AUTHOR", "")).upper() == "QLP":
-            lc = lc[lc.quality.value == 0]
-        lc = lc.remove_nans()
-        row.n_in = len(lc)
-        if row.n_in < 100:  # a few QLP files contain only NaN flux
+        time, flux, flux_err, row.n_in = load_raw(raw_file)
+        if len(time) == 0:
             row.status = "empty"
             log.warning("TIC %d: only %d finite points, skipping", tic_id, row.n_in)
             return row
-        lc = lc.normalize()
-        # 2. clip UPWARD outliers only (flares, cosmic rays). Never clip downward: those are the transits.
-        lc = lc.remove_outliers(sigma_upper=4, sigma_lower=np.inf)
-        row.n_out = len(lc)
-
-        time = lc.time.value  # BTJD = BJD - 2457000
-        flux = lc.flux.value.astype(float)
-        flux_err = lc.flux_err.value.astype(float)
-
-        # 3. wotan returns plain numpy arrays: (flattened_flux, trend) with return_trend=True.
-        flat, trend = wotan.flatten(
-            time,
-            flux,
-            method="biweight",
-            window_length=window_length,
-            return_trend=True,
-        )
-        # biweight leaves NaN where the window has too few points (edges, gaps) — drop them
-        good = np.isfinite(flat)
-        # 4. drop the first/last edge_trim days of each orbit, where the window was one-sided (see edge_mask)
-        keep = edge_mask(time, edge_trim)
-        row.n_trimmed = int((good & ~keep).sum())
-        good &= keep
-
-        # QLP files carry NaN flux_err for the SAP flux; fall back to a robust scatter estimate
-        bad_err = ~np.isfinite(flux_err)
-        if bad_err.any():
-            mad = np.nanmedian(np.abs(flat[good] - np.nanmedian(flat[good])))
-            flux_err = np.where(bad_err, 1.4826 * mad, flux_err)
-
-        out = pd.DataFrame(
-            {
-                "time": time[good],
-                "flux": flat[good],
-                "flux_err": flux_err[good],
-                "trend": trend[good],
-                "flux_raw": flux[good],
-            }
-        )
+        row.n_out = len(time)
+        out, row.n_trimmed = flatten_lc(time, flux, flux_err, window_length, edge_trim)
         FLAT_DIR.mkdir(parents=True, exist_ok=True)
         path = FLAT_DIR / f"{tic_id}.parquet"
         out.to_parquet(path, index=False)

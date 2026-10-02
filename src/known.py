@@ -5,13 +5,14 @@ Usage:
     uv run python -m src.known --offline               # use the newest catalogs already in data/known/
     uv run python -m src.known --refresh               # force a new download today
     uv run python -m src.known --gaia-scope strong     # Gaia EB cones around every SDE>=9 signal, not only candidates
+    uv run python -m src.known --second-pass           # the second-pass signals (data/search/pass2/)
 
 Input : data/search/sector_{N}_vetted.parquet (from src.vet)
         data/targets/sector_{N}.parquet         (ra, dec, tmag, gaia_dr2_id)
         catalogs, stored raw in data/known/YYYY-MM-DD/:
           toi.csv, ctoi.csv (ExoFOP), pscomppars.csv (NASA Exoplanet Archive),
           tess_ebs.parquet (Prsa+ 2022, VizieR J/ApJS/258/16, sectors 1-26),
-          gaia_veb_sector_{N}_{scope}.parquet (Gaia DR3 EBs, VizieR I/358/veb, cone queries)
+          gaia_veb_sector_{N}.parquet + _queried.json (Gaia DR3 EBs, VizieR I/358/veb, cone queries)
 Output: data/search/sector_{N}_known.parquet   all vetted columns + known_class and match details.
         Sorted: passes_all first, then known_class (new first), then snr.
         data/search/sector_{N}_known_meta.json catalog folder, sizes, tolerances.
@@ -180,27 +181,44 @@ def load_known(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return known[KNOWN_COLS]
 
 
-def gaia_ebs(sig: pd.DataFrame, day_dir: Path, sector: int, scope: str, offline: bool) -> pd.DataFrame:
-    """Gaia DR3 EBs within the neighbour radius of the signals in `sig` (one VizieR request, cached).
+def gaia_ebs(sig: pd.DataFrame, day_dir: Path, sector: int, offline: bool) -> pd.DataFrame:
+    """Gaia DR3 EBs within the neighbour radius of the signals in `sig` (VizieR cone queries, cached).
 
+    The cache records WHICH signals were queried (a cone with no EB has no rows), so a changed
+    candidate list only queries the new ones. Online: today's folder, missing cones are queried.
+    Offline: the caches of all dated folders are merged; cones still missing are reported.
     Returned in the KNOWN_COLS schema plus tic_query (the signal it was found around) and self.
     """
-    path = day_dir / f"gaia_veb_sector_{sector}_{scope}.parquet"
-    if path.exists():
-        g = pd.read_parquet(path)
-    elif offline or len(sig) == 0:
-        log.warning("no Gaia EB cache at %s; skipping Gaia", path)
-        return pd.DataFrame(columns=KNOWN_COLS + ["tic_query", "self"])
-    else:
-        log.info("querying Gaia DR3 EBs (VizieR I/358/veb) around %d signals", len(sig))
+    cols = ["tic_query", "Source", "RA_ICRS", "DE_ICRS", "Freq"]
+    dirs = sorted(KNOWN_ROOT.glob("????-??-??"), reverse=True) if offline else [day_dir]
+    parts, queried = [pd.DataFrame(columns=cols)], set()
+    for d in dirs:
+        rows_p, q_p = d / f"gaia_veb_sector_{sector}.parquet", d / f"gaia_veb_sector_{sector}_queried.json"
+        if rows_p.exists() and q_p.exists():
+            new_q = set(json.loads(q_p.read_text())) - queried
+            part = pd.read_parquet(rows_p)
+            parts.append(part[part["tic_query"].isin(new_q)])
+            queried |= new_q
+    parts = [p for p in parts if len(p)] or parts[:1]
+    g = pd.concat(parts, ignore_index=True)
+    missing = sig[~sig.index.isin(queried)]
+    if len(missing) and offline:
+        log.warning("offline: no cached Gaia EB query for %d of %d signals; they get no Gaia check",
+                    len(missing), len(sig))
+    elif len(missing):
+        log.info("querying Gaia DR3 EBs (VizieR I/358/veb) around %d signals", len(missing))
         res = Vizier(columns=["Source", "RA_ICRS", "DE_ICRS", "Freq"], row_limit=-1, timeout=600).query_region(
-            SkyCoord(sig["ra"].values, sig["dec"].values, unit="deg"),
+            SkyCoord(missing["ra"].values, missing["dec"].values, unit="deg"),
             radius=NEIGHBOUR_RADIUS_ARCSEC * u.arcsec,
             catalog="I/358/veb",
         )
-        g = res[0].to_pandas() if len(res) else pd.DataFrame(columns=["_q", "Source", "RA_ICRS", "DE_ICRS", "Freq"])
-        g["tic_query"] = sig.index.values[g["_q"].astype(int) - 1]  # _q is 1-based
-        g.to_parquet(path, index=False)
+        new = res[0].to_pandas() if len(res) else pd.DataFrame(columns=["_q"] + cols[1:])
+        new["tic_query"] = missing.index.values[new["_q"].astype(int) - 1]  # _q is 1-based
+        g = pd.concat([x for x in (g, new[cols]) if len(x)] or [g], ignore_index=True)
+        queried |= set(int(t) for t in missing.index)
+        g.to_parquet(day_dir / f"gaia_veb_sector_{sector}.parquet", index=False)
+        (day_dir / f"gaia_veb_sector_{sector}_queried.json").write_text(json.dumps(sorted(int(t) for t in queried)))
+    g = g[g["tic_query"].isin(sig.index)].reset_index(drop=True)
     if len(g) == 0:
         return pd.DataFrame(columns=KNOWN_COLS + ["tic_query", "self"])
     out = pd.DataFrame({
@@ -399,8 +417,10 @@ def known_sector(
     refresh: bool = False,
     gaia_scope: str = "candidates",
     radius_arcsec: float = NEIGHBOUR_RADIUS_ARCSEC,
+    second_pass: bool = False,
 ) -> pd.DataFrame:
-    vetted = pd.read_parquet(SEARCH_DIR / f"sector_{sector}_vetted.parquet")
+    base = SEARCH_DIR / "pass2" / f"sector_{sector}_pass2" if second_pass else SEARCH_DIR / f"sector_{sector}"
+    vetted = pd.read_parquet(f"{base}_vetted.parquet")
     targets = pd.read_parquet(
         DATA_DIR / "targets" / f"sector_{sector}.parquet", columns=["tic_id", "ra", "dec", "tmag", "gaia_dr2_id"]
     )
@@ -417,7 +437,7 @@ def known_sector(
         "strong": sig["pass_sde"] & sig["pass_n_transits"],
         "none": pd.Series(False, index=sig.index),
     }[gaia_scope]
-    gaia = gaia_ebs(sig[scope_rows & sig["ra"].notna()], day_dir, sector, gaia_scope, offline)
+    gaia = gaia_ebs(sig[scope_rows & sig["ra"].notna()], day_dir, sector, offline)
     log.info("Gaia DR3 EBs within %.0f\" of %d signals: %d (%d are the target itself)",
              radius_arcsec, int(scope_rows.sum()), len(gaia), int(gaia["self"].sum()) if len(gaia) else 0)
     siblings = find_siblings(sig, radius_arcsec)
@@ -430,7 +450,7 @@ def known_sector(
     out = out.sort_values(["passes_all", "_order", "snr"], ascending=[False, True, False]).drop(columns="_order")
     out = out.reset_index(drop=True)
 
-    out_path = SEARCH_DIR / f"sector_{sector}_known.parquet"
+    out_path = Path(f"{base}_known.parquet")
     out.to_parquet(out_path, index=False)
     meta = {
         "catalog_dir": str(day_dir),
@@ -478,6 +498,8 @@ def main() -> None:
         help="Gaia EB cones around passes_all signals (default), every SDE>=9 signal with >=2 transits, or none",
     )
     p.add_argument("--radius", type=float, default=NEIGHBOUR_RADIUS_ARCSEC, help="neighbour radius, arcsec")
+    p.add_argument("--second-pass", action="store_true",
+                   help="cross-match the second-pass signals (pass2/sector_N_pass2_vetted.parquet)")
     a = p.parse_args()
     if a.sector is None:
         p.error("no --sector given and SECTOR not set in .env")
@@ -485,7 +507,7 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     warnings.filterwarnings("ignore", module="astroquery")
-    out = known_sector(a.sector, a.offline, a.refresh, a.gaia_scope, a.radius)
+    out = known_sector(a.sector, a.offline, a.refresh, a.gaia_scope, a.radius, a.second_pass)
     cols = ["tic_id", "known_class", "period", "depth_ppm", "rp_earth", "snr", "flags", "known_ids", "nb_id",
             "likely_source"]
     print(out[out["passes_all"]][cols].to_string())

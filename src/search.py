@@ -6,6 +6,7 @@ Usage:
     uv run python -m src.search --period-min 0.5 --oversampling 5
     uv run python -m src.search --force
     uv run python -m src.search --second-pass          # after a first pass exists
+    uv run python -m src.search --second-pass --only-candidates   # only stars whose pass-1 signal passed vetting
 
 Input : data/targets/sector_{N}_detrend.parquet (rows with status == "ok", from src.detrend)
         data/targets/sector_{N}.parquet           (rad, mass per star, from src.targets)
@@ -213,6 +214,7 @@ def search_sector(
     period_max: float | None = None,
     oversampling_factor: int = 3,
     second_pass: bool = False,
+    only_candidates: bool = False,
 ) -> pd.DataFrame:
     detrend = pd.read_parquet(DATA_DIR / "targets" / f"sector_{sector}_detrend.parquet")
     targets = pd.read_parquet(
@@ -224,6 +226,10 @@ def search_sector(
         pass1 = pd.read_parquet(output_path(sector))
         pass1 = pass1[pass1["status"] == "ok"][["tic_id", "period", "duration_h", "T0"]]
         ok = ok.merge(pass1, on="tic_id")
+        if only_candidates:
+            # a second planet is most interesting (and the search cheapest) where the first signal survived vetting
+            vetted = pd.read_parquet(SEARCH_DIR / f"sector_{sector}_vetted.parquet", columns=["tic_id", "passes_all"])
+            ok = ok[ok["tic_id"].isin(vetted.loc[vetted["passes_all"], "tic_id"])]
     ok = ok.head(limit).join(targets, on="tic_id")
     missing = ok["rad"].isna() | ok["mass"].isna()
     if missing.any():
@@ -302,6 +308,10 @@ def main() -> None:
         help="mask each star's first-pass signal and search again; reads data/search/sector_N.parquet, "
         "writes data/search/pass2/sector_N_pass2.parquet with the same columns",
     )
+    p.add_argument(
+        "--only-candidates", action="store_true",
+        help="with --second-pass: only stars whose first-pass signal passes vetting (sector_N_vetted.parquet)",
+    )
     a = p.parse_args()
     if a.sector is None:
         p.error("no --sector given and SECTOR not set in .env")
@@ -310,7 +320,7 @@ def main() -> None:
     )
     s = search_sector(
         a.sector, a.n_jobs, a.limit, a.force,
-        a.period_min, a.period_max, a.oversampling, a.second_pass,
+        a.period_min, a.period_max, a.oversampling, a.second_pass, a.only_candidates,
     )
     cols = [
         "tic_id", "status", "SDE", "snr", "period", "depth_ppm", "duration_h",

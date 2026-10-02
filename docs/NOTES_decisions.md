@@ -5,6 +5,28 @@ Newest first. Each entry says how to re-check it.
 
 ---
 
+## 2026-10-02 — The 0.5-day biweight keeps ~90 % of short transits, ~75 % of 2.5-h ones
+
+**Check** (`tests/test_detrend_inject.py`; plan §5 sanity check, not done before). A 2-mmag
+box transit every 2 d, on a 1 %, 3-d sine trend with 1,000 ppm white noise, flattened with
+`flatten_lc`. Fraction of the depth retained:
+
+| duration | 0.5 h | 1.0 h | 1.5 h | 2.5 h |
+|---|---|---|---|---|
+| flat star, noise | 1.01 | 0.91 | 0.92 | 0.83 |
+| 1 %/3 d trend, noise | 1.02 | 0.90 | 0.96 | 0.72 |
+
+The biweight is robust but not blind: a transit filling ~20 % of the 12-h window pulls the
+trend down a little. This matches the "window ≈ 3× the longest duration" rule (2.5 h × 3 =
+7.5 h is close to the limit). A 1 %, **1-day** modulation is not removed at all (the residual
+is anti-correlated with the box). That is by design, and the vetting variability test exists
+for it.
+
+**Consequences.** Depths of long transits (P ≳ 8 d around early M dwarfs) are underestimated
+by up to ~25 %, and so are their `rp_earth` (by ~13 %). The injection-recovery run measures
+what this costs in detections. A transit *fit* (follow-up) should be done on light curves
+detrended with the transit masked.
+
 ## 2026-10-02 — QLP alternate-aperture fluxes cannot be used as a blend test
 
 **Idea.** QLP files contain fluxes from three apertures: `DET_FLUX_SML`, `SAP_FLUX` (the
