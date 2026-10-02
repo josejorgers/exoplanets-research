@@ -24,6 +24,12 @@ dependencies = [
     "wotan>=1.10",
 ]
 
+[project.optional-dependencies]
+followup = [
+    "emcee>=3.1.6",
+    "triceratops>=1.0.21",
+]
+
 [tool.black]
 target-version = ["py314"]
 
