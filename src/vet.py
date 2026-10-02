@@ -55,6 +55,7 @@ SEARCH_DIR = DATA_DIR / "search"
 THRESH = dict(
     sde_min=9.0,  # TLS white-noise FAP ~1e-4
     snr_min=7.0,  # Kepler/TESS 7.1 sigma convention; TOI-122 b (snr 5.6 in s104) fails this
+    snr_column="snr_tls",  # which SNR the threshold applies to: TLS's (white noise) or ours ("snr": local, red noise)
     n_transits_min=2,  # periodicity needs at least two events with data
     grid_edge_frac=0.98,  # period within 2 % of period_max = peak at the grid edge
     survive_frac=0.5,  # signal must keep >= 50 % of its sqrt(N)-expected SNR after dropping suspect transits
@@ -78,10 +79,14 @@ THRESH = dict(
 DUMP_WINDOW_D = 0.25
 LOCAL_NOISE_D = 0.5  # per-transit noise from out-of-transit points within +- this many days
 EDGE_COVERAGE_MIN = 0.5  # a transit needs >= 50 % of the expected points on EACH side
+# A transit shifts the in-transit points down but keeps their scatter; a noise burst (pointing
+# jitter, glitches) inflates it. Measured on the central half of the transit (no ingress/egress
+# gradient); planets in sector 104 stay <= 1.7x, the glitch-driven TIC 394134586 reaches 3.9x.
+SCATTER_RATIO_MAX = 2.0
 
 HARD = [
     "sde", "snr", "n_transits", "grid_edge", "single_event", "momentum_dump", "data_edges",
-    "odd_even", "secondary", "duration", "radius", "variability",
+    "transit_noise", "odd_even", "secondary", "duration", "radius", "variability",
 ]
 SOFT = ["v_shaped", "centroid", "contamination", "variable_star"]
 
@@ -108,6 +113,8 @@ class VetRow:
     dump_survival: float = np.nan  # same, without the transits near momentum dumps
     n_edge: int = 0  # transits with < EDGE_COVERAGE_MIN of the expected data on one side (gaps, orbit edges)
     edge_survival: float = np.nan  # same, without those transits
+    n_noisy: int = 0  # transits whose central in-transit scatter > SCATTER_RATIO_MAX x the local scatter
+    noisy_survival: float = np.nan  # same, without those transits
     # --- odd/even, secondary ---
     depth_odd_ppm: float = np.nan
     depth_even_ppm: float = np.nan
@@ -233,8 +240,10 @@ def _per_transit(t, y, in_tr, oot, epoch, T0, period, dur, beta, sigma) -> pd.Da
         d, e = _depth_err(y, m, beta * max(sig_k, sigma * 0.5))  # floor: never trust a local sigma < half the global
         pre = ((t > tm - dur / 2 - side) & (t < tm - dur / 2)).sum() * cadence / side
         post = ((t > tm + dur / 2) & (t < tm + dur / 2 + side)).sum() * cadence / side
-        rows.append((k, tm, d, e, sig_k, min(pre, post)))
-    pt = pd.DataFrame(rows, columns=["epoch", "t_mid", "depth", "err", "sigma_local", "coverage"])
+        core = m & (np.abs(t - tm) < dur / 4)  # central half: no ingress/egress gradient
+        ratio = _robust_std(y[core]) / sig_k if core.sum() >= 6 and sig_k > 0 else np.nan
+        rows.append((k, tm, d, e, sig_k, min(pre, post), ratio))
+    pt = pd.DataFrame(rows, columns=["epoch", "t_mid", "depth", "err", "sigma_local", "coverage", "scatter_ratio"])
     pt["snr"] = pt["depth"] / pt["err"]
     return pt
 
@@ -368,6 +377,9 @@ def vet_one(
             edge = (pt["coverage"] < EDGE_COVERAGE_MIN).to_numpy()
             row.n_edge = int(edge.sum())
             row.edge_survival = _survival(pt, edge, min_keep=THRESH["n_transits_min"]) if edge.any() else 1.0
+            noisy = (pt["scatter_ratio"] > SCATTER_RATIO_MAX).to_numpy()
+            row.n_noisy = int(noisy.sum())
+            row.noisy_survival = _survival(pt, noisy, min_keep=THRESH["n_transits_min"]) if noisy.any() else 1.0
 
         attempt("transits", transit_tests)
 
@@ -487,7 +499,7 @@ def apply_thresholds(df: pd.DataFrame, thresh: dict = THRESH) -> pd.DataFrame:
     df = df.copy()
     nan = lambda c: df[c].isna()  # noqa: E731
     df["pass_sde"] = df["SDE"] >= thresh["sde_min"]
-    df["pass_snr"] = df["snr_tls"] >= thresh["snr_min"]
+    df["pass_snr"] = df[thresh.get("snr_column", "snr_tls")] >= thresh["snr_min"]
     df["pass_n_transits"] = df["distinct_transit_count"] >= thresh["n_transits_min"]
     df["pass_grid_edge"] = (df["period"] < thresh["grid_edge_frac"] * df["period_max"]) & np.isfinite(
         df["period_unc"]
@@ -495,6 +507,7 @@ def apply_thresholds(df: pd.DataFrame, thresh: dict = THRESH) -> pd.DataFrame:
     df["pass_single_event"] = (df["single_event_survival"] >= thresh["survive_frac"]) | nan("single_event_survival")
     df["pass_momentum_dump"] = (df["dump_survival"] >= thresh["survive_frac"]) | nan("dump_survival")
     df["pass_data_edges"] = (df["edge_survival"] >= thresh["survive_frac"]) | nan("edge_survival")
+    df["pass_transit_noise"] = (df["noisy_survival"] >= thresh["survive_frac"]) | nan("noisy_survival")
     df["pass_odd_even"] = ~(df["odd_even_sigma"] > thresh["odd_even_sigma_max"])
     df["pass_secondary"] = ~(df["secondary_snr"] >= thresh["secondary_snr_max"])
     df["pass_duration"] = df["duration_ratio"].between(thresh["dur_ratio_min"], thresh["dur_ratio_max"]) | nan(
@@ -677,6 +690,8 @@ def main() -> None:
     )
     p.add_argument("--sde-min", type=float, default=THRESH["sde_min"])
     p.add_argument("--snr-min", type=float, default=THRESH["snr_min"])
+    p.add_argument("--snr-column", choices=["snr_tls", "snr"], default=THRESH["snr_column"],
+                   help="SNR used by the snr test: TLS's (white noise) or ours (local, red-noise corrected)")
     p.add_argument("--odd-even-max", type=float, default=THRESH["odd_even_sigma_max"])
     p.add_argument("--secondary-max", type=float, default=THRESH["secondary_snr_max"])
     a = p.parse_args()
@@ -689,6 +704,7 @@ def main() -> None:
         **THRESH,
         "sde_min": a.sde_min,
         "snr_min": a.snr_min,
+        "snr_column": a.snr_column,
         "odd_even_sigma_max": a.odd_even_max,
         "secondary_snr_max": a.secondary_max,
     }

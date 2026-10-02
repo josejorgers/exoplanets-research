@@ -39,7 +39,7 @@ Every signal that passes all hard vetting tests and is not explained by a known 
 | 4 | 306101698 | 2.879 | 4,882 | 3.1 | 10.5 | centroid | **A** | Quiet star, box-shaped 2-h transit, 8 transits, odd/even 0.06σ, no secondary, clean periodogram peak with aliases. Only concern: centroid shift 8.6σ (possible blend; check pixels). |
 | 5 | 61615837 | 1.108 | 3,558 | 2.4 | 10.3 | centroid | C | Large ramps in the raw flux; shallow, broad fold. |
 | 6 | 304448456 | 0.592 | 4,357 | 2.0 | 9.7 | centroid | **B** | Box-shaped dip, SDE 15, clean periodogram; ramps are flattened well. Centroid 7.6σ, contratio 0.29. |
-| 7 | 394134586 | 2.212 | 1,341 | 1.3 | 9.5 | contamination | **D** | Glitch-driven: three 1–2-cadence downward spikes (−1 to −2 %) in orbit 2 coincide with the predicted times; much shorter than the 1.8-h duration; nothing in orbit 1. |
+| 7 | 394134586 | 2.212 | 1,341 | 1.3 | 9.5 | contamination | **D** | Glitch-driven: the last three predicted transits each contain a ~1-h burst of strongly increased scatter (+1 % to −2 %) whose mean is low; the seven earlier transits show nothing. |
 | 8 | 308210382 | 10.947 | 15,565 | 3.2 | 8.0 | contamination | **D** | Two narrow events, one next to the 4198.2 dump; raw flux shows glitch-like drops. |
 | 9 | 161313862 | 0.293 | 2,705 | 1.2 | 7.9 | centroid | C | Shallow 7-h-period signal; 4.3σ dip at phase 0.52 (threshold 5); centroid shift 16σ → probably a blend. |
 | 10 | 389683926 | 9.654 | 9,881 | 3.6 | 7.3 | contamination | C | Three transits on strong ramps; contratio 0.65. |
@@ -81,10 +81,10 @@ frequency-based variability matching with a significance requirement. See
 
 Still open, seen in this review:
 
-- **Glitch-driven signals** (ranks 7, 13): a few 1–2-cadence spikes much shorter than the
-  transit duration. A test comparing the in-transit point distribution with a transit shape
-  (e.g. the fraction of the depth carried by the lowest 10 % of in-transit points) would
-  catch them.
+- **Glitch-driven signals** (ranks 7, 13): short bursts of increased scatter inside a few
+  transit windows, whose mean happens to be low. A test comparing the in-transit scatter with
+  the local out-of-transit scatter (a transit shifts the points down but keeps their scatter)
+  would catch them.
 - **Strong ramps** (C grades): QLP light curves with 10–50 % trends still yield dips after
   flattening. Comparing per-transit depths with the local slope of the raw flux could quantify
   this.

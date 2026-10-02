@@ -221,6 +221,7 @@ def panel_table(ax, s, d):
         ("dur / expected", s.duration_ratio, "duration"), ("Rp [R⊕]", s.rp_earth, "radius"),
         ("var amp / depth", s.var_amp_frac, "variability"), ("1-event survival", s.single_event_survival, "single_event"),
         ("dump survival", s.dump_survival, "momentum_dump"), ("edge survival", s.edge_survival, "data_edges"),
+        ("noisy-tr. survival", s.noisy_survival, "transit_noise"),
         ("SNR (TLS)", s.snr_tls, "snr"), ("SDE", s.SDE, "sde"),
     ]
     lines = ["hard tests", "-" * 28]

@@ -5,6 +5,23 @@ Newest first. Each entry says how to re-check it.
 
 ---
 
+## 2026-10-02 — New hard test `transit_noise` (glitch-driven signals)
+
+**Seen in the review** (`docs/REVIEW_sector104.md`, rank 7): TIC 394134586 passed all v2 tests
+with a 1.3 R⊕ "planet". Its last three predicted transits each contain a ~1-h burst of strongly
+increased scatter (+1 % to −2 %) whose mean is low. The seven earlier transits show nothing.
+
+**Test.** For each transit, the robust scatter of the points in the central half of the
+transit window, divided by the local out-of-transit scatter (±0.5 d). A transit shifts points
+but keeps their scatter, so planets give ≈ 1. Transits above 2.0 are dropped and the signal must
+survive (≥ 0.5 of its expected SNR, ≥ 2 transits left).
+
+**Calibration** on sector 104: 8 known planets, max ratio 1.13–1.72 (none > 2); A/B candidates
+≤ 1.72; TIC 394134586 has 3 transits > 2 (max 3.93). The central half avoids the ingress/egress
+gradient, which would otherwise inflate the ratio for deep transits. Deep EBs (V-shaped) still
+score high, which is harmless since other tests reject them. Unit test:
+`test_noise_bursts_inside_transit_windows_fail`.
+
 ## 2026-10-02 — Vetting v2: four changes motivated by the by-eye review of the report
 
 Reviewing the 32 "new" candidates page by page (`docs/REVIEW_sector104.md`) showed failure
