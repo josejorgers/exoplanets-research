@@ -2,7 +2,9 @@
 
 A pipeline that searches one TESS sector for transiting planets around nearby M dwarfs
 (< 100 pc), vets the signals, removes everything already known, and produces a ranked report
-of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sector 104**.
+of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sector 104** (status and results at
+the top of that file: all 9 confirmed transiting planets in the target list found, 8 of them
+passing vetting and labelled known; 19 new signals, none surviving follow-up).
 
 ## Pipeline
 
@@ -16,6 +18,7 @@ of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sect
 | 6 | `src/known.py` | cross-match with TOI, CTOI, confirmed planets, TESS & Gaia EBs, neighbours | `data/search/sector_N_known.parquet` |
 | 7 | `src/report.py` | one PDF page per candidate + run summary | `data/reports/sector_N.pdf` |
 | — | `src/inject.py` | injection-recovery: completeness of steps 3–5 | `data/injection/sector_N_injrec.parquet` |
+| — | `src/followup.py` | other sectors, MCMC fit, difference image, Gaia, TRICERATOPS FPP | `data/followup/{tic}/` |
 
 ## Running
 
@@ -26,6 +29,7 @@ uv run python -m src.cli run --sector 104 --n-jobs 8 # the whole chain (hours: f
 uv run python -m src.cli run --from vet              # re-run from a step
 uv run python -m src.cli vet --rethreshold --snr-min 6   # any step with its own options
 uv run python -m src.cli inject --n 1000 --n-jobs 10     # calibration (not part of `run`)
+uv run --extra followup python -m src.followup --tics 306101698   # §12 follow-up of single candidates
 uv run pytest -m "not slow"                          # unit tests (seconds)
 uv run pytest -m slow                                # end-to-end on LHS 3844 (needs data/, ~1 min)
 ```

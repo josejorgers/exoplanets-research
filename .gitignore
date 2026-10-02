@@ -20,3 +20,5 @@ data/
 
 # Notebooks
 *.ipynb_checkpoints
+# lightkurve cache when notebooks run from notebooks/ (relative LIGHTKURVE_CACHE_DIR)
+notebooks/.lightkurve/

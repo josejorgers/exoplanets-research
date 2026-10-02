@@ -139,6 +139,32 @@ def sector_search(ms: pd.DataFrame, P: float, rad: float, mass: float, discovery
     return pd.DataFrame(rows)
 
 
+def repetition(sec: pd.DataFrame, P: float, depth_ppm: float, discovery_sector: int,
+               tol: float = 0.005, snr_min: float = 5.0) -> dict:
+    """Does the signal come back in the other sectors, one by one?
+
+    TLS's SDE is meaningless in a narrow window, and its snr is unreliable on multi-sector data
+    (negative values occur), so the test counts independent sectors whose OWN narrow search returns
+    the same period (within single-sector precision, `tol`) with snr >= snr_min, and checks that their
+    depths agree with the discovery depth. Sectors returning 2P or P/2 are counted separately: an
+    eclipsing binary detected at half its period comes back at 2P where both eclipses are covered.
+    """
+    one = sec[sec["data"].str.match(r"s\d{3}$")].copy()
+    one["sector"] = one["data"].str[1:].astype(int)
+    other = one[one["sector"] != discovery_sector]
+    same = other[((other["period"] - P).abs() / P < tol) & (other["snr"] >= snr_min)]
+    alias = other[(((other["period"] - 2 * P).abs() / (2 * P) < tol) | ((other["period"] - P / 2).abs() / (P / 2) < tol))
+                  & (other["snr"] >= snr_min)]
+    ratio = float(np.median(same["depth_ppm"]) / depth_ppm) if len(same) else np.nan
+    n_other = len(other)
+    return {
+        "n_other_sectors": n_other, "n_same_period": len(same), "n_alias_period": len(alias),
+        "depth_ratio": ratio,
+        "repeats": bool(n_other > 0 and len(same) >= max(2, int(np.ceil(n_other / 2))) and 0.5 < ratio < 2),
+        "repeats_at_alias": bool(len(alias) >= max(1, int(np.ceil(n_other / 2)))),
+    }
+
+
 # ------------------------------------------------------------------------------------------------
 # 3. transit fit
 # ------------------------------------------------------------------------------------------------
@@ -274,12 +300,16 @@ def difference_image(tic_id: int, star: pd.Series, P: float, T0: float, dur_h: f
         cutout_size=size, download_dir=os.environ.get("LIGHTKURVE_CACHE_DIR"))
     good = (tpf.quality == 0) & np.all(np.isfinite(tpf.flux.value), axis=(1, 2))
     t, cube = tpf.time.value[good], tpf.flux.value[good]
+    # Per-cadence sky background: scattered light changes by more than a transit within an hour and
+    # differently from one transit to the next; without this the difference image is dominated by it.
+    # The 20th percentile of the cutout is a robust sky estimate even in crowded fields.
+    cube = cube - np.percentile(cube.reshape(len(cube), -1), 20, axis=1)[:, None, None]
     dur = dur_h / 24
     epoch = np.round((t - T0) / P).astype(int)
     dt = t - (T0 + epoch * P)
     diffs, oots = [], []
     for k in np.unique(epoch):
-        i_in = (epoch == k) & (np.abs(dt) < 0.4 * dur)
+        i_in = (epoch == k) & (np.abs(dt) < 0.5 * dur)  # the whole transit: all the signal there is
         i_oot = (epoch == k) & (np.abs(dt) > 0.75 * dur) & (np.abs(dt) < 2.5 * dur)
         if i_in.sum() >= 3 and i_oot.sum() >= 6:
             oot = np.median(cube[i_oot], axis=0)
@@ -438,6 +468,7 @@ def followup_one(tic_id: int, sector: int, skip_fit: bool = False, skip_fpp: boo
     sec = sector_search(ms, s.period, star.rad, star.mass, sector, threads=threads)
     sec.to_csv(out_dir / "sectors.csv", index=False)
     summary["sector_search"] = sec.to_dict("records")
+    summary["repetition"] = repetition(sec, s.period, s.depth_ppm, sector)
     comb = sec[sec["data"] == "all sectors"].iloc[0]
     P_best, T0_best = float(comb["period"]), float(comb["T0"])
 

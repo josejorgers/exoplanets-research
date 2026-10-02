@@ -1,5 +1,43 @@
 # Milestone 1 — Automated transit search for new candidates in one TESS sector
 
+## Status (2026-10-02): milestone 1 run on sector 104
+
+| plan step | module | status |
+|---|---|---|
+| 1 targets | `src/targets.py` | done: 4,710 M dwarfs |
+| 2 fetch | `src/fetch.py` | done: 4,695 light curves (4,087 QLP, 608 SPOC) |
+| 3 detrend | `src/detrend.py` | done; orbit-edge trim; scattered light handled by quality flags |
+| 4 search | `src/search.py` | done: 4,693 TLS searches; second pass on the candidates |
+| 5 vetting | `src/vet.py` | done: 13 hard tests + 4 soft flags (v2, after review and injections) |
+| 6 known objects | `src/known.py` | done: TOI, CTOI, planets, TESS & Gaia EBs, neighbours, siblings |
+| 7 report | `src/report.py` | done: PDF + PNG per candidate + summary |
+| 8 CLI & tests | `src/cli.py`, `tests/` | done: `python -m src.cli run`, 26 tests incl. end-to-end on LHS 3844 |
+| §6 injection-recovery | `src/inject.py` | done: 1,000 injections; thresholds tuned (SDE ≥ 10, SNR ≥ 6.5) |
+| §12 follow-up | `src/followup.py` | done for the 5 best candidates + a known-planet control |
+
+**Definition of done** (§11):
+
+- *full-sector run completes unattended*: yes (`python -m src.cli run --sector 104`);
+- *recovers the known TOIs, flagged as known*: the target list contains 9 confirmed
+  **transiting** planets. The search finds **all 9** at the right period, 8 pass vetting and are
+  labelled `known_planet`, and TOI-122 b fails only the SNR threshold (SNR 5.6). TOI-6858.01 (PC)
+  is found but fails SDE and SNR. (The other confirmed planets around these stars were found by
+  radial velocities and do not transit; they are why some signals are classed
+  `new_in_known_system`.)
+- *ranked report of unknown signals*: yes, 19 new signals (`data/reports/sector_104.pdf`),
+  graded in `docs/REVIEW_sector104.md`;
+- *injection/recovery numbers documented*: yes (notebook 8, `docs/NOTES_decisions.md`). 50 %
+  completeness at an expected SNR of 9.5 after vetting. The §6 target "> 80 % at 3 mmag, P < 10 d"
+  is **not** met (72 %).
+
+**Science outcome:** no new planet candidate survives follow-up. The five best signals are
+two that do not repeat in other sectors and three eclipsing binaries on neighbouring stars
+(notebook 9). Next steps: automate the repetition and difference-image checks for every
+survivor, and run further sectors.
+
+Decision log: `docs/NOTES_decisions.md`. Walkthrough notebooks for every step: `notebooks/`.
+
+
 ## 0. Why this milestone
 
 Candidate milestones were scored on *promise* (chance the output contains

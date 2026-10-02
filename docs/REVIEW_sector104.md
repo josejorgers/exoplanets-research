@@ -59,7 +59,57 @@ Every signal that passes all hard vetting tests and is not explained by a known 
 
 **Summary:** 1 A, 2 B, 11 C, 9 D. The A and B candidates (TIC 306101698, 229804549,
 304448456), plus TIC 161313862 (whose centroid issue should be settled one way or the other)
-and TIC 394585043 (as a worked example of a candidate that does not repeat), go to notebook 9.
+and TIC 394585043 (as a worked example of a candidate that does not repeat), went to notebook 9.
+None survived (see "Follow-up" below).
+
+## After threshold tuning (injection-recovery, SDE ≥ 10 and SNR ≥ 6.5)
+
+The thresholds chosen in notebook 8 change the "new" list (19 candidates instead of 21):
+
+| TIC | change | grade | comment |
+|---|---|---|---|
+| 49143293 | removed (SDE 9.95) | D | systematics, see above |
+| 308210382 | removed (SDE 9.71; also fails `transit_noise`) | D | glitch-like events |
+| 631919622 | removed (SDE 9.31) | D | irregular variability |
+| 389683926 | removed (SDE 9.09) | C | three transits on ramps |
+| 64336445 | **added** (SNR_TLS 6.96, below the old 7.0) | C | noisy light curve (~1.5 % scatter) with strong ramps; centroid 9σ, contratio 0.56. Probably a blend or noise. |
+
+Three of the four removed candidates had been graded D by eye. That is independent evidence
+that the tuned thresholds remove junk rather than planets.
+
+## Second-pass search (a second planet around the candidates)
+
+`search --second-pass --only-candidates` masked each of the 40 passing signals and searched
+again. 7 stars have a second signal with SDE > 9, and none passes vetting:
+
+- TIC 229804549 returns at the **same** period (masking 2× the TLS duration does not cover the
+  dip's broad wings). This supports the "broader than a transit" concern.
+- TIC 262530407 (GJ 3090, host of TOI-177 b): SDE 15.4 at 6.56 d, failing `momentum_dump`,
+  `data_edges` and `secondary`. These are systematics, and not GJ 3090 c (P = 15.9 d, known
+  from radial velocities, outside a one-sector search).
+- The rest are rejected by SDE/SNR, or are aliases of EB signals on known-neighbour stars.
+
+## Follow-up of the five best candidates (notebook 9)
+
+Every sector of each star was searched again (narrow window around P), the pixels were
+difference-imaged, the combined light curve was fitted with an MCMC transit model, and
+TRICERATOPS computed a false-positive probability. LHS 3844 b went through the same chain as
+a control.
+
+| TIC | grade | repeats in other sectors | pixels | fitted ρ★ / TIC ρ★ | FPP | outcome |
+|---|---|---|---|---|---|---|
+| LHS 3844 (control) | known planet | 10 of 10 | on target (0.04 ± 0.08 px) | 0.80 | 0.015 | **planet**, validated-level FPP |
+| 306101698 | A | 5 of 7 | **off target**: loss 2 px away | 0.07 | 0.90 (NEB) | **blended EB on a neighbour** |
+| 304448456 | B | 0 of 2, but **2 of 2 at 2P** | **off target**: loss 2 px away | 0.04 | 0.99 | **EB on a neighbour, found at half its period** |
+| 229804549 | B | 2 of 7 (depth 43 %) | **off target**: loss 6 px away | 0.04 | 1.00 | **blend; does not repeat cleanly** |
+| 161313862 | C | 0 of 6 | inconclusive | – | 0.27 | **does not repeat** |
+| 394585043 | D | 0 of 9 | inconclusive | – | 0.06 | **does not repeat** (was the pipeline's #1) |
+
+**Result: no new planet candidate from sector 104 survives follow-up; no CTOI submission.**
+The dominant false positive among vetting survivors is a neighbouring eclipsing binary, which
+vetting on the target's own light curve cannot exclude. The repetition check and the difference
+image are cheap enough to run on every survivor, so they are the natural next additions to the
+automated pipeline.
 
 ## Signals rejected by vetting but looked at anyway
 
