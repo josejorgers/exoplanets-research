@@ -110,8 +110,7 @@ class VetRow:
     # --- the star ---
     duration_exp_h: float = np.nan  # central transit, circular orbit, Kepler's 3rd law
     duration_ratio: float = np.nan
-    rp_earth: float = np.nan  # rp_rs * R_star, no dilution correction (lower bound if diluted)
-    rp_earth_undiluted: float = np.nan  # * sqrt(1 + contratio)
+    rp_earth: float = np.nan  # rp_rs * R_star; SPOC and QLP light curves are already deblended
     contratio: float = np.nan
     # --- variability ---
     var_period: float = np.nan  # Lomb-Scargle peak of the transit-masked flattened flux, days
@@ -295,7 +294,6 @@ def vet_one(
                 row.duration_exp_h = _expected_duration_h(P, rad, mass, float(sig["rp_rs"]))
                 row.duration_ratio = dur_h / row.duration_exp_h
                 row.rp_earth = float(sig["rp_rs"]) * rad * R_EARTH_PER_R_SUN
-                row.rp_earth_undiluted = row.rp_earth * np.sqrt(1 + np.nan_to_num(row.contratio))
 
         attempt("star", star_tests)
 

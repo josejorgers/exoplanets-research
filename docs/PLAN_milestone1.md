@@ -311,9 +311,12 @@ re-detrended star: SDE 27.8 → 6.6 (noise). `edge_trim ≈ window_length / 2`
 is the region where the window is one-sided; scale it if you change the window.
 Cost: ~360 of 8,800 points per star (4 %).
 
-Still TODO here: mask the scattered-light windows listed in the sector's Data
-Release Notes (store them in `config.toml` per sector — item 4 above). Whatever
-survives still needs the vetting rules in §7.
+Scattered-light windows (item 4 above): **resolved without extra code** (checked
+2026-10-02). SPOC sets PDCSAP to NaN on every cadence flagged with bit 13 (4096,
+scattered light) or bit 15 (16384, bad calibration), and `detrend.py` keeps only
+`quality == 0` for QLP. In 20 SPOC files, 0 of 54,564 flagged cadences survive into
+`data/lc_flat/`. See `docs/NOTES_decisions.md`. Whatever survives still needs the
+vetting rules in §7.
 
 Source: wotan docs — https://github.com/hippke/wotan
 
