@@ -4,7 +4,8 @@ A pipeline that searches one TESS sector for transiting planets around nearby M 
 (< 100 pc), vets the signals, removes everything already known, and produces a ranked report
 of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sector 104** (status and results at
 the top of that file: all 9 confirmed transiting planets in the target list found, 8 of them
-passing vetting and labelled known; 19 new signals, none surviving follow-up).
+passing vetting and labelled known; 13 new signals: 12 explained by follow-up, one unresolved
+among close neighbours; no CTOI).
 
 ## Pipeline
 
@@ -60,6 +61,10 @@ not astronomy:
 | `notebooks/pipeline-7-report-walkthrough.ipynb` | how to read a candidate page; derived planet properties |
 | `notebooks/pipeline-8-injection-recovery.ipynb` | completeness, and choosing the thresholds |
 | `notebooks/pipeline-9-candidate-followup.ipynb` | from candidate to CTOI: other sectors, pixels, transit fit, false-positive probability |
+
+Before the notebooks, `docs/primer/` has plain-language articles for readers with no
+astronomy background, starting with `01-what-we-are-looking-for.md` (what a planet looks like
+in the data, and what imitates one).
 
 Other documents:
 

@@ -33,7 +33,7 @@ Every signal that passes all hard vetting tests and is not explained by a known 
 
 | rank | TIC | P [d] | depth [ppm] | Rp [R⊕] | SNR | flags | grade | reason |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 394585043 | 4.496 | 7,335 | 2.4 | 6.6 | – | **D** | **Not repeating**: searched in 9 other sectors (2018–2026, 51k points) within ±2 % of P, SDE ≈ 6 (noise). A 7,300-ppm transit would be obvious there. Notebook 9 §2. |
+| 1 | 394585043 | 4.496 | 7,335 | 2.4 | 6.6 | – | **D** | **Not repeating**: the 9 other sectors (2018–2026, 51k points) searched together within ±2 % of P return a different period at a third of the depth, where this transit would reach SNR ≈ 16. (No single other sector is sensitive enough on its own.) Notebook 9 §1. |
 | 2 | 49143293 | 9.049 | 42,592 | 6.0 | 5.4 | – | **D** | Systematics: QLP flux jumps 0.4→2.0; the three "transits" sit at a segment start, on the 4185.04 dump, and in the scattered-light stretch after the gap. Local-noise SNR 5.4 vs TLS 8.5. |
 | 3 | 229804549 | 0.732 | 2,385 | 2.8 | 17.3 | centroid | **B** | 30 consistent transits, clean periodogram with harmonics, flat odd/even. Concerns: dip wings broader than the model, a significant modulation at 14 % of the depth (just below the 15 % rejection limit), centroid 6σ. |
 | 4 | 306101698 | 2.879 | 4,882 | 3.1 | 10.5 | centroid | **A** | Quiet star, box-shaped 2-h transit, 8 transits, odd/even 0.06σ, no secondary, clean periodogram peak with aliases. Only concern: centroid shift 8.6σ (possible blend; check pixels). |
@@ -57,14 +57,16 @@ Every signal that passes all hard vetting tests and is not explained by a known 
 | 22 | 389127976 | 0.576 | 30,288 | 5.9 | 7.1 | centroid, contamination, variable_star | **D** | ~20 % flux steps in the raw data; contratio 7.2; the fold is a step, not a transit. |
 | 23 | 470329609 | 0.854 | 1,019 | 1.0 | 7.5 | 4 flags | C | Weak, V-shaped, every flag raised. |
 
-**Summary:** 1 A, 2 B, 11 C, 9 D. The A and B candidates (TIC 306101698, 229804549,
+**Summary:** 1 A, 2 B, 11 C, 9 D (23 signals: the "new" list of vetting v2, before the
+`transit_noise` test and the threshold tuning below). The A and B candidates (TIC 306101698, 229804549,
 304448456), plus TIC 161313862 (whose centroid issue should be settled one way or the other)
 and TIC 394585043 (as a worked example of a candidate that does not repeat), went to notebook 9.
 None survived (see "Follow-up" below).
 
 ## After threshold tuning (injection-recovery, SDE ≥ 10 and SNR ≥ 6.5)
 
-The thresholds chosen in notebook 8 change the "new" list (19 candidates instead of 21):
+The `transit_noise` test (added after this review) removes rank 7, TIC 394134586, and the
+thresholds chosen in notebook 8 change the list further (19 candidates instead of 23):
 
 | TIC | change | grade | comment |
 |---|---|---|---|
@@ -74,8 +76,11 @@ The thresholds chosen in notebook 8 change the "new" list (19 candidates instead
 | 389683926 | removed (SDE 9.09) | C | three transits on ramps |
 | 64336445 | **added** (SNR_TLS 6.96, below the old 7.0) | C | noisy light curve (~1.5 % scatter) with strong ramps; centroid 9σ, contratio 0.56. Probably a blend or noise. |
 
-Three of the four removed candidates had been graded D by eye. That is independent evidence
-that the tuned thresholds remove junk rather than planets.
+Three of the four removed candidates had been graded D by eye. That is consistent with the
+tuned thresholds removing junk rather than planets, but it is weak evidence: the thresholds
+were chosen partly to minimise the number of real sector-104 signals passing, almost all of
+which are junk, and with 9 of 23 graded D, three D's among four removals happens by chance
+about one time in six.
 
 ## Second-pass search (a second planet around the candidates)
 
@@ -98,12 +103,20 @@ a control.
 
 | TIC | grade | repeats in other sectors | pixels | fitted ρ★ / TIC ρ★ | FPP | outcome |
 |---|---|---|---|---|---|---|
-| LHS 3844 (control) | known planet | 10 of 10 | on target (0.04 ± 0.08 px) | 0.80 | 0.015 | **planet**, validated-level FPP |
-| 306101698 | A | 5 of 7 | **off target**: loss 2 px away | 0.07 | 0.90 (NEB) | **blended EB on a neighbour** |
-| 304448456 | B | 0 of 2, but **2 of 2 at 2P** | **off target**: loss 2 px away | 0.04 | 0.99 | **EB on a neighbour, found at half its period** |
-| 229804549 | B | 2 of 7 (depth 43 %) | **off target**: loss 6 px away | 0.04 | 1.00 | **blend; does not repeat cleanly** |
-| 161313862 | C | 0 of 6 | inconclusive | – | 0.27 | **does not repeat** |
-| 394585043 | D | 0 of 9 | inconclusive | – | 0.06 | **does not repeat** (was the pipeline's #1) |
+| LHS 3844 (control) | known planet | 10 of 10 | on target (0.04 ± 0.08 px) | 0.80 | 0.015 | **planet**; FPP at the validation limit (optimistic: background scenarios were skipped, see below) |
+| 306101698 | A | 6 of 7 | **off target**: loss 2 px away | 0.07 | 0.90 (NEB) | **blended EB on a neighbour** |
+| 304448456 | B | 2 of 2 at P but 2× deeper; deeper again at 2P | **off target**: loss 2 px away | 0.04 | 0.99 | **EB on a neighbour, found at half its period** |
+| 229804549 | B | 2 of 7 (depth 45 %) | **off target**: loss 6 px away | 0.04 | 1.00 | **blend; does not repeat cleanly** |
+| 161313862 | C | 0 of 4 informative (6 observed) | inconclusive | – | 0.27 | **does not repeat** |
+| 394585043 | D | no single sector informative; 9 combined: absent | inconclusive | – | 0.06 | **does not repeat** (was the pipeline's #1) |
+
+(Repetition column after the 2026-10-04 fix: the first version's "narrow-window" searches were
+full searches in most sectors, and counted sectors too weak to show the signal. The verdicts
+did not change; see `docs/NOTES_decisions.md`.)
+
+All FPPs in this table were computed without TRICERATOPS' background-star scenarios (the
+TRILEGAL server was unreachable), so they are lower limits. That does not change any outcome:
+every candidate is rejected by repetition or pixels, independently of FPP.
 
 **Result: no new planet candidate from sector 104 survives follow-up; no CTOI submission.**
 The dominant false positive among vetting survivors is a neighbouring eclipsing binary, which
@@ -140,3 +153,44 @@ Still open, seen in this review:
   this.
 - **Centroid shifts** are frequent among plausible candidates (6–16σ). Only pixel-level
   difference imaging can say *where* the signal comes from (notebook 9 §4).
+
+## Vetting v3 and follow-up of every remaining candidate (2026-10-04)
+
+Vetting v3 (`docs/NOTES_decisions.md`, 2026-10-04) tightened the duration test (≤ 1.5× the
+central-transit duration, no lower bound) and made the secondary test phase-aware. It removes
+six "new" signals, all graded C or worse here or rejected by follow-up: TIC 304448456 (B, EB
+on a neighbour), 160188205 (D), 217484923, 213062150, 74510850, 470329609 (C). Nothing was
+added. **13 "new" candidates remain.**
+
+The six remaining C grades, never checked before, went through the repetition check and the
+difference image; the two that repeated went through the full chain (fit, FPP).
+
+| TIC | P [d] | repeats in other sectors | pixels | outcome |
+|---|---|---|---|---|
+| 424913827 | 1.573 | 2 of 4, depth up to 3.6× larger (sector 94: SNR 26); deeper at 2P | **off target**: S/N 200 loss 3.6 px away | **EB on a neighbour, found at half its period** |
+| 61615837 | 1.108 | 1 of 3 informative, 3× deeper (sector 67: SNR 24) | **off target**: loss 2.7 px away | **EB on a neighbour** |
+| 88516648 | 1.214 | 1 of 3 informative | **off target**: loss 2.4 px away | **blend** |
+| 64336445 | 0.677 | only in all sectors combined (depth 0.6×) | inconclusive (S/N < 5); light centre moves 2.4 px | **likely blend**: fitted stellar density 0.10× the target's (FPP 0.45) |
+| 372868160 | 4.513 | 0 of 4 informative; combined absent | – | **does not repeat** |
+| 214311908 | 5.692 | **3 of 5** (2 of 2 informative), same depth; combined too | loss 0.3 px from the catalog position | **ambiguous**, see below |
+
+**TIC 214311908** passes everything the data can test: it repeats over six years (2019–2026)
+at the same 13,800-ppm depth, the MCMC fit gives Rp = 4.9 ± 0.4 R⊕, b ≈ 0.6 and a stellar
+density 0.84× the TIC value, the transit is U-shaped (T23/T14 = 0.58), odd/even agree (0.9σ),
+and nothing is seen at phase 0.5. But the field is crowded (contratio 2.2; ~11 % of the aperture
+light is the target's), and Gaia DR3 lists stars at 3.2″ (ΔG = 3.2), 5.2″ and 5.4″ that are
+bright enough to make the dip if they were eclipsing binaries, unresolvable at 21″ per pixel.
+TRICERATOPS gives FPP = NFPP = 0.64 (top scenario: planet on the target, 33 %), and that is
+optimistic (background scenarios skipped). It does not meet our FPP < 0.5 bar for a CTOI.
+Deciding it needs seeing-limited photometry of the 3–5″ neighbours during a predicted transit.
+
+(Its difference image was first labelled "off target": the flux loss is 0.76 px from the
+out-of-transit light centroid, which the neighbours pull away from the star. The off-target
+rule now requires the loss to be away from the catalog position as well; no other verdict
+changed.)
+
+**Updated result for sector 104:** 12 of the 13 "new" candidates are explained (7 eclipsing
+binaries or blends on neighbours counting the V-shaped TIC 218663210, 3 that do not repeat, 2
+systematics); one, TIC 214311908, is an unresolved candidate that TESS data alone cannot
+settle. No CTOI submission.
+

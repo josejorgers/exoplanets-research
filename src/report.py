@@ -217,7 +217,7 @@ def panel_periodogram(ax, tls, s):
 def panel_table(ax, s, d):
     ax.axis("off")
     rows = [
-        ("odd/even [σ]", s.odd_even_sigma, "odd_even"), ("secondary [σ]", s.secondary_snr, "secondary"),
+        ("odd/even [σ]", s.odd_even_sigma, "odd_even"), ("secondary [σ]", s.get("secondary_half_snr", s.secondary_snr), "secondary"),
         ("dur / expected", s.duration_ratio, "duration"), ("Rp [R⊕]", s.rp_earth, "radius"),
         ("var amp / depth", s.var_amp_frac, "variability"), ("1-event survival", s.single_event_survival, "single_event"),
         ("dump survival", s.dump_survival, "momentum_dump"), ("edge survival", s.edge_survival, "data_edges"),
@@ -233,6 +233,8 @@ def panel_table(ax, s, d):
     lines.append(f"{'⚑' if s.flag_centroid else ' '} centroid [σ]  {s.centroid_sigma:9.1f}")
     lines.append(f"{'⚑' if s.flag_contamination else ' '} contratio     {s.contratio:9.2f}")
     lines.append(f"{'⚑' if s.flag_variable_star else ' '} var FAP       {s.var_fap:9.1e}")
+    if "rotation_match" in s:  # information only: raw-flux periodicity matching P_tls (see vet.THRESH)
+        lines.append(f"{'?' if s.rotation_match else ' '} raw P_rot [d] {s.rot_period:9.2f}")
     ax.text(0, 1.08, "\n".join(lines), va="top", ha="left", family="DejaVu Sans Mono", fontsize=6.0,
             transform=ax.transAxes)
 

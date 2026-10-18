@@ -62,9 +62,19 @@ THRESH = dict(
     grid_edge_frac=0.98,  # period within 2 % of period_max = peak at the grid edge
     survive_frac=0.5,  # signal must keep >= 50 % of its sqrt(N)-expected SNR after dropping suspect transits
     odd_even_sigma_max=3.0,
-    secondary_snr_max=5.0,  # 5 sigma: the scan tests many phases (look-elsewhere)
-    dur_ratio_min=1 / 3,  # observed / expected central-transit duration
-    dur_ratio_max=3.0,
+    # secondary eclipse: >= 5 sigma near phase 0.5 (circular-orbit EB), or >= 7 sigma anywhere else (eccentric EB).
+    # A 5-sigma cut at every phase rejected 5 of 412 recovered injections (dips at phase 0.06-0.65, residual red
+    # noise on high-SNR planets); 7 sigma off 0.5 keeps them and still rejects the deep eccentric EBs of sector 104.
+    secondary_snr_max=5.0,
+    secondary_phase_window=0.1,  # |phase - 0.5| below this counts as "near 0.5"
+    secondary_snr_max_any=7.0,
+    # observed / expected central-transit (b = 0, circular) duration. A transit can be much SHORTER (grazing, b -> 1,
+    # and TLS sometimes underestimates short durations: 8 of 412 recovered injections had ratios 0.09-0.32), so there
+    # is no lower bound. It cannot be much LONGER: 99 % of recovered injections are <= 1.01, the 8 known planets of
+    # sector 104 are 0.59-0.87; 1.5 leaves room for eccentricity ((1+e)/sqrt(1-e^2) = 1.36 at e = 0.3) and a 30 %
+    # error on the TIC density. The former bounds (1/3, 3) let through 9 signals at 1.5-2.3, all blends or EBs.
+    dur_ratio_min=0.0,
+    dur_ratio_max=1.5,
     rp_earth_max=16.8,  # 1.5 R_Jup; giants around M dwarfs are not inflated
     var_fap_max=1e-3,  # variability: a significant Lomb-Scargle peak (white-noise false-alarm probability) ...
     var_harmonic_tol=1.0,  # ... at a harmonic of the TLS frequency, within 1 frequency-resolution element (1/baseline) ...
@@ -72,6 +82,13 @@ THRESH = dict(
     var_amp_frac_max=0.15,  # ... and semi-amplitude >= 15 % of the transit depth
     variable_amp_frac=0.3,  # soft: a significant modulation >= 30 % of the depth at any period
     v_shape_max=0.3,  # soft: trapezoid T23/T14 below this = V-shaped
+    # rotation_match (information only, not a flag): the RAW flux has a significant periodicity, P_tls is P_rot,
+    # 2 P_rot or P_rot / 2 within 1 resolution element, and the raw semi-amplitude is >= half the depth. As a soft
+    # flag it fired on 20 % of all stars, 18 of 342 recovered injections and TOI-177 b: the raw flux is dominated
+    # by spacecraft systematics at 4-8 d. It is shown on the report page for a human to judge.
+    rot_fap_max=1e-3,
+    rot_harmonic_tol=1.0,
+    rot_amp_frac_min=0.5,
     centroid_sigma_max=3.0,  # soft
     contratio_max=0.5,  # soft
 )
@@ -79,6 +96,7 @@ THRESH = dict(
 # Momentum dumps leave flux steps; the 0.5-d biweight smears a step over +- window/2, so a
 # transit within 0.25 d (+ half its duration) of a dump is suspect (same reasoning as edge_trim).
 DUMP_WINDOW_D = 0.25
+ROT_PERIOD_MAX_D = 8.0  # rotation search on the raw flux: two cycles per ~12-d orbit segment
 LOCAL_NOISE_D = 0.5  # per-transit noise from out-of-transit points within +- this many days
 EDGE_COVERAGE_MIN = 0.5  # a transit needs >= 50 % of the expected points on EACH side
 # A transit shifts the in-transit points down but keeps their scatter; a noise burst (pointing
@@ -122,6 +140,7 @@ class VetRow:
     depth_even_ppm: float = np.nan
     odd_even_sigma: float = np.nan
     secondary_snr: float = np.nan  # most significant dip away from the transit, any phase
+    secondary_half_snr: float = np.nan  # most significant dip within secondary_phase_window of phase 0.5
     secondary_depth_ppm: float = np.nan
     secondary_phase: float = np.nan
     # --- the star ---
@@ -138,6 +157,13 @@ class VetRow:
     var_harmonic_n: float = np.nan  # the harmonic (n: f_var = n f_tls; -n: f_tls = n f_var) closest to the peak
     var_harmonic_offset: float = np.nan  # its frequency offset in resolution elements (1/baseline)
     var_amp_frac: float = np.nan  # variability semi-amplitude / transit depth
+    # --- rotation: the same periodogram on the RAW flux. The 0.5-d biweight removes modulation slower than
+    # ~1-2 d before the variability test above sees it, so spot rotation of a few days is only visible here.
+    rot_period: float = np.nan
+    rot_fap: float = np.nan
+    rot_amp_frac: float = np.nan  # raw semi-amplitude / transit depth
+    rot_harmonic_n: float = np.nan  # 1: P_tls = P_rot, 2: P_tls = 2 P_rot, -2: P_tls = P_rot / 2
+    rot_harmonic_offset: float = np.nan  # in resolution elements (1/baseline)
     # --- soft-flag metrics ---
     trap_depth_ppm: float = np.nan
     trap_t14_h: float = np.nan
@@ -345,12 +371,13 @@ def vet_one(
             return row
 
         # --- shared preparation: light curve, phases, masks, noise ---
-        lc = pd.read_parquet(flat_file, columns=["time", "flux"])
+        lc = pd.read_parquet(flat_file)
         t, y = lc["time"].to_numpy(float), lc["flux"].to_numpy(float)
+        yraw = lc["flux_raw"].to_numpy(float) if "flux_raw" in lc else np.full(len(t), np.nan)
         good = np.isfinite(t) & np.isfinite(y)
         if mask is not None:
             good &= ~transit_mask(t, mask[0], 2 * mask[1], mask[2])
-        t, y = t[good], y[good]
+        t, y, yraw = t[good], y[good], yraw[good]
         row.n_points = len(t)
         dt = _phase_time(t, P, T0)
         in_tr = np.abs(dt) < dur / 2
@@ -396,7 +423,7 @@ def vet_one(
 
         # --- secondary eclipse: most significant dip at any phase away from the transit ---
         def secondary():
-            best = (0.0, np.nan, np.nan)
+            best, best_half = (0.0, np.nan, np.nan), 0.0
             for cph in np.arange(-P / 2, P / 2, dur / 4):
                 if abs(cph) < 1.5 * dur or P - abs(cph) < 1.5 * dur:
                     continue
@@ -404,9 +431,13 @@ def vet_one(
                 if m.sum() < 3:
                     continue
                 d, e = _depth_err(y, m, err1)
+                ph = (cph / P) % 1
                 if d / e > best[0]:
-                    best = (d / e, d * 1e6, (cph / P) % 1)
+                    best = (d / e, d * 1e6, ph)
+                if abs(ph - 0.5) < THRESH["secondary_phase_window"]:
+                    best_half = max(best_half, d / e)
             row.secondary_snr, row.secondary_depth_ppm, row.secondary_phase = best
+            row.secondary_half_snr = best_half
 
         attempt("secondary", secondary)
 
@@ -435,6 +466,37 @@ def vet_one(
             row.var_harmonic_n, row.var_harmonic_offset = float(n_best), float(off * baseline)
 
         attempt("variability", variability)
+
+        # --- rotation: Lomb-Scargle of the transit-masked RAW flux (before flattening) ---
+        def rotation():
+            ok = oot & np.isfinite(yraw)
+            if ok.sum() < 100:
+                return
+            tr, yr = t[ok], yraw[ok].copy()
+            # ramps and scattered light make orbit-long trends in the raw flux; a straight line per segment
+            # removes them and keeps most of a modulation of a few days
+            starts = np.r_[0, np.where(np.diff(tr) > 0.5)[0] + 1]
+            for a, b in zip(starts, np.r_[starts[1:], len(tr)]):
+                if b - a > 10:
+                    yr[a:b] -= np.polyval(np.polyfit(tr[a:b] - tr[a], yr[a:b], 1), tr[a:b] - tr[a])
+            fmin, fmax = 1 / ROT_PERIOD_MAX_D, 1 / 0.1
+            ls = LombScargle(tr, yr)
+            freq, power = ls.autopower(minimum_frequency=fmin, maximum_frequency=fmax, samples_per_peak=10)
+            if np.argmax(power) == 0:  # peak at the long-period edge: a leftover trend, not a rotation
+                return
+            f_rot = freq[np.argmax(power)]
+            model = ls.model(np.linspace(0, 1 / f_rot, 200), f_rot)
+            amp = (model.max() - model.min()) / 2
+            row.rot_period = float(1 / f_rot)
+            row.rot_fap = float(ls.false_alarm_probability(power.max(), minimum_frequency=fmin, maximum_frequency=fmax))
+            row.rot_amp_frac = float(amp / depth) if depth > 0 else np.nan
+            baseline = float(tr.max() - tr.min())
+            f_tls = 1 / P
+            cands = [(1, abs(f_tls - f_rot)), (2, abs(f_rot - 2 * f_tls)), (-2, abs(f_tls - 2 * f_rot))]
+            n_best, off = min(cands, key=lambda x: x[1])
+            row.rot_harmonic_n, row.rot_harmonic_offset = float(n_best), float(off * baseline)
+
+        attempt("rotation", rotation)
 
         # --- shape: trapezoid fit to the fold ---
         def shape():
@@ -511,7 +573,13 @@ def apply_thresholds(df: pd.DataFrame, thresh: dict = THRESH) -> pd.DataFrame:
     df["pass_data_edges"] = (df["edge_survival"] >= thresh["survive_frac"]) | nan("edge_survival")
     df["pass_transit_noise"] = (df["noisy_survival"] >= thresh["survive_frac"]) | nan("noisy_survival")
     df["pass_odd_even"] = ~(df["odd_even_sigma"] > thresh["odd_even_sigma_max"])
-    df["pass_secondary"] = ~(df["secondary_snr"] >= thresh["secondary_snr_max"])
+    # tables vetted before secondary_half_snr existed: fall back to the any-phase dip when it lies near 0.5
+    if "secondary_half_snr" in df:
+        half = df["secondary_half_snr"]
+    else:
+        phase = df["secondary_phase"] if "secondary_phase" in df else pd.Series(np.nan, index=df.index)
+        half = df["secondary_snr"].where((phase - 0.5).abs() < thresh["secondary_phase_window"], 0.0)
+    df["pass_secondary"] = ~((half >= thresh["secondary_snr_max"]) | (df["secondary_snr"] >= thresh["secondary_snr_max_any"]))
     df["pass_duration"] = df["duration_ratio"].between(thresh["dur_ratio_min"], thresh["dur_ratio_max"]) | nan(
         "duration_ratio"
     )
@@ -524,6 +592,13 @@ def apply_thresholds(df: pd.DataFrame, thresh: dict = THRESH) -> pd.DataFrame:
     df["flag_centroid"] = df["centroid_sigma"] > thresh["centroid_sigma_max"]
     df["flag_contamination"] = df["contratio"] > thresh["contratio_max"]
     df["flag_variable_star"] = significant & (df["var_amp_frac"] >= thresh["variable_amp_frac"])
+    if "rot_fap" in df:
+        df["rotation_match"] = (
+            (df["rot_fap"] < thresh["rot_fap_max"]) & (df["rot_harmonic_offset"] < thresh["rot_harmonic_tol"])
+            & (df["rot_amp_frac"] >= thresh["rot_amp_frac_min"])
+        )
+    else:
+        df["rotation_match"] = False
 
     hard = df[[f"pass_{k}" for k in HARD]]
     soft = df[[f"flag_{k}" for k in SOFT]]
@@ -666,6 +741,7 @@ def rethreshold(sector: int, second_pass: bool = False, thresh: dict = THRESH) -
     meta_path = out_path.with_name(out_path.stem + "_meta.json")
     dumps = json.loads(meta_path.read_text())["momentum_dumps_btjd"] if meta_path.exists() else []
     drop = [c for c in df.columns if c.startswith(("pass_", "flag_"))] + ["passes_all", "n_flags", "failed", "flags"]
+    drop = [c for c in drop + ["rotation_match"] if c in df.columns]
     df = apply_thresholds(df.drop(columns=drop), thresh)
     _write(df, out_path, dumps, thresh)
     _log_survivors(df, out_path)

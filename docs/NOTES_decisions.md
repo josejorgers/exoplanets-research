@@ -5,6 +5,72 @@ Newest first. Each entry says how to re-check it.
 
 ---
 
+## 2026-10-04 — Vetting v3 and a broken follow-up repeat check
+
+A review of the primer article against the code found two vetting cuts that cost planets or
+let blends through, and a silent bug in the follow-up. Each change is tested in
+`tests/test_vet.py` / `tests/test_followup.py`.
+
+**1. Follow-up "narrow-window" searches were mostly full searches (bug).** TLS replaces its
+period grid by the default one (R = M = 1, *no period limits*) when fewer than 100 grid periods
+fall inside [period_min, period_max], and `followup._tls_window` suppressed the warning. A ±2 %
+window around P = 4.5 d holds ~25 periods in one sector, so every per-sector search of TIC
+394585043, 229804549 and 306101698, and two of 304448456, searched all periods (the stored
+results show periods far outside the window, e.g. 1.13 d for a 4.50 d signal). Combined
+multi-sector searches were not affected (long baseline → dense grid). **Fix:** raise
+`oversampling_factor` until the window holds ≥ 100 periods (`window_oversampling`), and raise
+an error if TLS still leaves the window.
+
+**2. Repetition had no notion of a sector's sensitivity.** A 30-minute sector with 1,100
+points cannot reach SNR 5 for a signal found at SNR 7–8, yet counted as "does not repeat".
+**Fix:** `sector_search` stores `snr_expected` (discovery depth / sector scatter ×
+√(in-transit points)); only sectors with `snr_expected` ≥ 7.5 can refute, a detection anywhere
+counts, and `repetition()` returns `testable = False` when no sector is informative.
+
+**2b. Eclipsing binaries at half their period need their own search.** A ±2 % window at P can
+never return 2P, so the old "returns 2P" count only worked *because of* bug 1 (TIC 304448456's
+other sectors were full searches that peaked at 2P). **Fix:** `alias_search` repeats the narrow
+search around 2P per sector; a sector shows unequal eclipses when its 2P depth exceeds the P
+depth by ≥ 20 % and ≥ 2σ (the ratio alone fired on half the sectors of TIC 306101698, which
+repeats at P: TLS's best depth at 2P is biased high at modest SNR).
+
+**2c. Off target needs the catalog position too.** The difference-image offset was measured
+from the out-of-transit light centroid only, which neighbours pull away from the star. TIC
+214311908 (contratio 2.2): 0.76 px from the light centroid, 0.30 px from the catalog position.
+Now both must be > 0.5 px. No other follow-up verdict changed.
+
+**3. Duration: no lower bound, upper bound 1.5 (was 1/3–3).** 8 of 412 correctly found
+injections had TLS durations 0.09–0.32 of the expected one (TLS underestimates short
+durations; most had small b) and were rejected. On the other side, 99 % of found injections
+are ≤ 1.01, the 8 passing known planets 0.59–0.87, while 9 real signals at 1.5–2.3 passed, all
+blends or EBs (TIC 304448456, found an EB on a neighbour by follow-up, among them).
+
+**4. Secondary: ≥ 5σ near phase 0.5 (±0.1), ≥ 7σ elsewhere (was 5σ anywhere).** 5 bright
+injections (expected SNR 20–355) were rejected for 5–6.7σ dips at phases 0.06–0.65; the
+off-phase secondaries of sector-104 EBs are 9–15σ. New metric `secondary_half_snr`.
+
+**5. Rotation on the raw flux: metric only, not a flag.** The variability test runs on the
+flattened flux, where rotation slower than ~1–2 d is gone. A Lomb–Scargle of the raw flux (a
+line removed per orbit segment, 0.1–8 d) now gives `rot_period` and `rotation_match`. As a soft
+flag it fired on 20 % of all stars, on 18 of 342 passing injections and on TOI-177 b: raw TESS
+flux is dominated by systematics at 4–8 d. It is shown on the report page instead.
+
+**Effect on sector 104** (same SDE ≥ 10 / SNR_TLS ≥ 6.5): 31 signals pass (was 40); all 8
+known planets still pass; the 9 removed are the duration cases above (6 "new", 3 known
+neighbour EBs); none added. "New" candidates: 13 (was 19). Injections: 342 of 412 found pass
+(was 339); completeness at SNR_exp ≥ 7: 79.9 % (was 79.2 %); losses to non-threshold tests:
+16 (was 26).
+
+**Follow-up, re-run with the fixes.** The five earlier verdicts stand (now with 6 of 7
+repeating sectors for TIC 306101698; TIC 394585043 decided by the combined other sectors, since
+no single one could show it). The six C-grade candidates never checked before: four are blends
+on neighbours (424913827, 61615837, 88516648, 64336445), 372868160 does not repeat, and
+214311908 repeats over six years, fits the star's density (0.84×), and stays ambiguous among
+3–5″ Gaia neighbours (FPP 0.64). Details in `docs/REVIEW_sector104.md` and notebook 9 §7.
+
+**Re-check.** `uv run pytest tests/test_vet.py tests/test_followup.py`; the comparison above
+is in notebook 8 §6.1. Pre-fix tables are kept in `data/_before_fix/`.
+
 ## 2026-10-02 — Thresholds from injection-recovery: SDE ≥ 10, SNR_TLS ≥ 6.5
 
 **Data.** 1,000 injections (`src/inject.py`, sector 104, P 0.3–12 d and Rp 0.5–6 R⊕

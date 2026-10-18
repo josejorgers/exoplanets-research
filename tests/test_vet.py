@@ -193,3 +193,54 @@ def test_nan_metric_passes_by_convention():
 def test_expected_duration_earth_sun():
     """An Earth-Sun central transit lasts ~13 hours."""
     assert abs(_expected_duration_h(365.25, 1.0, 1.0) - 13.0) < 0.3
+
+
+def test_duration_bounds_long_fails_short_passes(planet, star):
+    """A dip much LONGER than a central transit cannot be this planet; a SHORTER one can (grazing)."""
+    sig, path, _ = planet
+    long = {**sig, "duration_h": 2.5 * sig["duration_h"]}
+    out = vet_table(long, vet_one(1, long, star, path, None, NO_DUMPS)).iloc[0]
+    assert out["duration_ratio"] > 1.5 and not out["pass_duration"]
+    short = {**sig, "duration_h": 0.2 * sig["duration_h"]}
+    out = vet_table(short, vet_one(1, short, star, path, None, NO_DUMPS)).iloc[0]
+    assert out["duration_ratio"] < 1 / 3 and out["pass_duration"]
+
+
+def test_secondary_threshold_depends_on_phase():
+    """>= 5 sigma near phase 0.5 fails; elsewhere only >= 7 sigma fails (residual noise on bright planets)."""
+    base = {"status": "ok", "SDE": 20.0, "snr_tls": 20.0, "distinct_transit_count": 5, "period": 1.0,
+            "period_max": 12.0, "period_unc": 0.001, "snr": 20.0}
+    rows = [
+        {**base, "secondary_snr": 6.0, "secondary_phase": 0.25, "secondary_half_snr": 2.0},  # off 0.5, < 7: pass
+        {**base, "secondary_snr": 6.0, "secondary_phase": 0.50, "secondary_half_snr": 6.0},  # at 0.5: fail
+        {**base, "secondary_snr": 8.0, "secondary_phase": 0.30, "secondary_half_snr": 5.5},  # both: fail
+        {**base, "secondary_snr": 8.0, "secondary_phase": 0.85, "secondary_half_snr": 1.0},  # eccentric EB: fail
+    ]
+    metrics = ["single_event_survival", "dump_survival", "edge_survival", "noisy_survival", "odd_even_sigma",
+               "duration_ratio", "rp_earth", "var_fap", "var_harmonic_offset", "var_amp_frac", "trap_flat_frac",
+               "centroid_sigma", "contratio"]
+    out = apply_thresholds(pd.DataFrame([{**{m: np.nan for m in metrics}, **r} for r in rows]))
+    by_phase = dict(zip(out["secondary_phase"], out["pass_secondary"]))
+    assert by_phase == {0.25: True, 0.50: False, 0.30: False, 0.85: False}
+
+
+def test_rotation_in_raw_flux_is_matched(tmp_path, star, rng):
+    """A 3-d spot modulation is gone from the flattened flux but not from the raw flux: a 3-d signal is flagged."""
+    t = time_grid()
+    P, T0 = 3.0, 4180.8
+    model, depth, dur_h = transit_model(t, P, T0, 2.5, 0.3, RAD, MASS, CADENCE)
+    flat = model + rng.normal(0, NOISE, len(t))
+    raw = flat * (1 + 0.01 * np.sin(2 * np.pi * t / P))
+    path = tmp_path / "rot.parquet"
+    pd.DataFrame({"time": t, "flux": flat, "flux_err": NOISE, "trend": raw / flat, "flux_raw": raw}).to_parquet(path)
+    sig = make_sig(P, T0, dur_h, depth, 2.5 / (RAD * 109.08))
+    out = vet_table(sig, vet_one(1, sig, star, str(path), None, NO_DUMPS)).iloc[0]
+    assert abs(out["rot_period"] - P) / P < 0.1
+    assert out["rotation_match"]
+    assert out["pass_variability"]  # the flattened-flux test cannot see it
+
+
+def test_planet_on_quiet_star_has_no_rotation_match(planet, star):
+    sig, path, _ = planet
+    out = vet_table(sig, vet_one(1, sig, star, path, None, NO_DUMPS)).iloc[0]
+    assert not out["rotation_match"]

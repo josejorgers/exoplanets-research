@@ -39,6 +39,7 @@ import wotan
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from transitleastsquares import cleaned_array, transitleastsquares
+from transitleastsquares.grid import period_grid
 
 from src.detrend import flatten_lc, load_raw
 
@@ -54,6 +55,11 @@ G_CGS = 6.674e-8
 R_SUN_CM, M_SUN_G = 6.957e10, 1.989e33
 R_EARTH_PER_R_SUN = 109.08
 PIXEL_ARCSEC = 21.0
+TLS_MIN_GRID = 100  # transitleastsquares.tls_constants.MINIMUM_PERIOD_GRID_SIZE
+# A sector can only refute a signal if the signal would have been seen there: expected SNR (discovery depth,
+# that sector's scatter and number of in-transit points) at least this high, i.e. >= 2.5 sigma above the
+# detection cut of repetition(). Weaker sectors (short baselines, 30-min cadence) are reported but not counted.
+SNR_INFORMATIVE = 7.5
 
 
 # ------------------------------------------------------------------------------------------------
@@ -100,19 +106,58 @@ def fetch_sectors(tic_id: int, out_dir: Path) -> pd.DataFrame:
 # ------------------------------------------------------------------------------------------------
 
 
+def window_oversampling(rad: float, mass: float, time_span: float, pmin: float, pmax: float, start: int = 3) -> int:
+    """Smallest oversampling_factor >= start that puts >= TLS_MIN_GRID trial periods in [pmin, pmax].
+
+    With fewer, TLS silently replaces the grid by its DEFAULT one (R = M = 1, no period limits), so a
+    "narrow-window" search becomes a full search: one sector of a P = 4.5 d signal has only ~25 grid
+    periods in +-2 %. The oversampling only refines the grid; the number of independent periods (and so
+    the look-elsewhere effect) stays the same.
+    """
+    ovs = start
+    while True:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # "very large grid" for multi-year baselines
+            grid = period_grid(rad, mass, time_span, oversampling_factor=ovs)  # full grid: no fallback
+        n = int(np.sum((grid > pmin) & (grid <= pmax)))
+        if n >= TLS_MIN_GRID or ovs > 10_000:
+            return ovs
+        ovs = int(np.ceil(ovs * 1.2 * TLS_MIN_GRID / max(n, 1)))
+
+
 def _tls_window(lc: pd.DataFrame, P: float, rad: float, mass: float, window: float, threads: int = 1):
     t, y, dy = cleaned_array(lc["time"].values, lc["flux"].values, lc["flux_err"].values)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        return transitleastsquares(t, y, dy).power(
+    pmin, pmax = P * (1 - window), P * (1 + window)
+    ovs = window_oversampling(rad, mass, float(t.max() - t.min()), pmin, pmax)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        r = transitleastsquares(t, y, dy).power(
             R_star=rad, M_star=mass, R_star_min=0.1, R_star_max=1.0, M_star_min=0.05, M_star_max=1.0,
-            period_min=P * (1 - window), period_max=P * (1 + window), oversampling_factor=3,
+            period_min=pmin, period_max=pmax, oversampling_factor=ovs,
             duration_grid_step=1.1, use_threads=threads, show_progress_bar=False, verbose=False,
         )
+    if any("period_grid defaults" in str(w.message) for w in caught) or not (pmin <= r.period <= pmax):
+        raise RuntimeError(f"TLS ignored the period window {pmin:.5f}-{pmax:.5f} d (returned {r.period:.5f})")
+    return r, ovs
+
+
+def expected_snr(lc: pd.DataFrame, P: float, dur_h: float, depth_ppm: float) -> float:
+    """SNR a transit of depth_ppm would reach in lc: depth / point scatter * sqrt(in-transit points).
+
+    In-transit points = all points * duration / P (no ephemeris needed: over a sector every phase is
+    sampled about equally). Uses the discovery depth, which selection biases high (the detected SNR
+    sits near the threshold partly by luck), so this is an upper estimate: a sector judged informative
+    really is.
+    """
+    y = lc["flux"].to_numpy()
+    sigma = 1.4826 * np.median(np.abs(y - np.median(y)))
+    n_in = len(y) * dur_h / 24 / P
+    return float(depth_ppm / 1e6 / sigma * np.sqrt(n_in)) if sigma > 0 else np.nan
 
 
 def sector_search(ms: pd.DataFrame, P: float, rad: float, mass: float, discovery_sector: int,
-                  window: float = 0.02, threads: int = 1) -> pd.DataFrame:
+                  window: float = 0.02, threads: int = 1, dur_h: float | None = None,
+                  depth_ppm: float | None = None) -> pd.DataFrame:
     """TLS restricted to P*(1 +- window): per sector, all but the discovery sector, and all sectors.
 
     In a narrow window the look-elsewhere effect is small, so a real transit comes back at the same
@@ -126,9 +171,11 @@ def sector_search(ms: pd.DataFrame, P: float, rad: float, mass: float, discovery
     for name, g in groups:
         if len(g) < 500:
             continue
-        r = _tls_window(g, P, rad, mass, window, threads)
+        r, ovs = _tls_window(g, P, rad, mass, window, threads)
+        snr_exp = expected_snr(g, P, dur_h, depth_ppm) if dur_h and depth_ppm else np.nan
         rows.append({
             "data": name, "n_points": len(g), "author": "/".join(sorted(g["author"].unique())),
+            "oversampling": ovs, "snr_expected": snr_exp,
             "SDE": float(r.SDE), "period": float(r.period), "period_unc": float(r.period_uncertainty),
             "T0": float(r.T0), "depth_ppm": (1 - float(r.depth)) * 1e6, "snr": float(r.snr),
             "duration_h": float(r.duration) * 24, "n_transits": int(r.distinct_transit_count),
@@ -137,6 +184,40 @@ def sector_search(ms: pd.DataFrame, P: float, rad: float, mass: float, discovery
         log.info("%s: SDE %.1f P %.5f depth %.0f ppm (%d transits)", name, r.SDE, r.period, (1 - r.depth) * 1e6,
                  r.distinct_transit_count)
     return pd.DataFrame(rows)
+
+
+def alias_search(ms: pd.DataFrame, P: float, rad: float, mass: float, window: float = 0.02,
+                 threads: int = 1) -> pd.DataFrame:
+    """Per sector, the same narrow search around 2P (rows "sNNN@2P").
+
+    An eclipsing binary with two different eclipses, found at half its period, folds both
+    eclipses together at P. At 2P only the deeper one is in the box, so the depth at 2P is clearly
+    larger than at P. A planet has the same depth at P and 2P (every other transit). The ±2 %
+    window at P can never return 2P itself, so this needs its own search.
+    """
+    rows = []
+    for s, g in ms.groupby("sector"):
+        if len(g) < 500 or (g["time"].max() - g["time"].min()) < 4 * P:  # need >= 2 transits at 2P
+            continue
+        try:
+            r, ovs = _tls_window(g, 2 * P, rad, mass, window, threads)
+        except Exception as ex:
+            log.warning("sector %d at 2P: %s", s, ex)
+            continue
+        rows.append({"data": f"s{int(s):03d}@2P", "n_points": len(g), "author": "/".join(sorted(g["author"].unique())),
+                     "oversampling": ovs, "SDE": float(r.SDE), "period": float(r.period),
+                     "period_unc": float(r.period_uncertainty), "T0": float(r.T0),
+                     "depth_ppm": (1 - float(r.depth)) * 1e6, "snr": float(r.snr),
+                     "duration_h": float(r.duration) * 24, "n_transits": int(r.distinct_transit_count),
+                     "odd_even_mismatch": float(r.odd_even_mismatch)})
+    return pd.DataFrame(rows)
+
+
+# A sector shows unequal eclipses when, detecting the signal at both P and 2P, the 2P depth is >= 1.2x the P depth
+# AND the difference is >= 2 sigma (sigma = depth / snr for each). The best-fit depth at 2P is biased high at modest
+# SNR (fewer transits, free phase), so the ratio alone fired on half the sectors of a signal that repeats at P.
+ALIAS_DEPTH_RATIO = 1.2
+ALIAS_SIGMA = 2.0
 
 
 def repetition(sec: pd.DataFrame, P: float, depth_ppm: float, discovery_sector: int,
@@ -148,20 +229,62 @@ def repetition(sec: pd.DataFrame, P: float, depth_ppm: float, discovery_sector: 
     the same period (within single-sector precision, `tol`) with snr >= snr_min, and checks that their
     depths agree with the discovery depth. Sectors returning 2P or P/2 are counted separately: an
     eclipsing binary detected at half its period comes back at 2P where both eclipses are covered.
+    That needs the "sNNN@2P" rows of alias_search(): a sector counts towards `repeats_at_alias` when
+    it detects the signal at both P and 2P and the 2P depth is >= ALIAS_DEPTH_RATIO x the P depth, by
+    >= ALIAS_SIGMA.
+
+    Only INFORMATIVE sectors (snr_expected >= SNR_INFORMATIVE) can refute the signal: a sector where a
+    real transit would reach SNR ~3 says nothing when it returns noise. A detection in any sector counts.
+    When no single sector is informative, the narrow search on ALL OTHER SECTORS COMBINED decides, if it
+    is informative itself: the signal repeats if it returns P (within `tol`) at a depth within a factor
+    of 2 (TLS's snr is unreliable on multi-sector data, so it is not used there). `testable` is False
+    when nothing is informative and nothing detected the signal: no verdict.
+    A table without snr_expected (older runs) treats every sector as informative.
     """
     one = sec[sec["data"].str.match(r"s\d{3}$")].copy()
+    at2 = sec[sec["data"].str.match(r"s\d{3}@2P$")].copy()
     one["sector"] = one["data"].str[1:].astype(int)
     other = one[one["sector"] != discovery_sector]
+    snr_exp = other["snr_expected"] if "snr_expected" in other else pd.Series(np.inf, index=other.index)
+    informative = other[snr_exp.fillna(np.inf) >= SNR_INFORMATIVE]
     same = other[((other["period"] - P).abs() / P < tol) & (other["snr"] >= snr_min)]
-    alias = other[(((other["period"] - 2 * P).abs() / (2 * P) < tol) | ((other["period"] - P / 2).abs() / (P / 2) < tol))
-                  & (other["snr"] >= snr_min)]
+    deeper = []
+    for _, r2 in at2.iterrows():
+        r1 = other[other["data"] == r2["data"][:4]]
+        if len(r1) and r1.index[0] in same.index and r2["snr"] >= snr_min and abs(r2["period"] - 2 * P) / (2 * P) < tol \
+                and r2["depth_ppm"] >= ALIAS_DEPTH_RATIO * r1["depth_ppm"].iloc[0]:
+            d1, s1 = r1["depth_ppm"].iloc[0], r1["snr"].iloc[0]
+            diff_sigma = (r2["depth_ppm"] - d1) / np.hypot(d1 / s1, r2["depth_ppm"] / r2["snr"])
+            if diff_sigma >= ALIAS_SIGMA:
+                deeper.append(r2["data"])
+    alias = pd.Series(deeper, dtype=object)
     ratio = float(np.median(same["depth_ppm"]) / depth_ppm) if len(same) else np.nan
-    n_other = len(other)
+    n_inf = len(informative)
+    # half of the informative sectors, at least 2 when there are 2 or more (a single sector can be a fluke)
+    needed = max(1, min(n_inf, max(2, int(np.ceil(n_inf / 2)))))
+    per_sector = bool(len(same) >= needed and 0.5 < ratio < 2)
+    comb = sec[sec["data"] == "all but discovery"]
+    comb_inf, comb_rep, comb_ratio = False, False, np.nan
+    if len(comb):
+        c = comb.iloc[0]
+        comb_inf = bool(c.get("snr_expected", np.inf) >= SNR_INFORMATIVE) if pd.notna(c.get("snr_expected", np.inf)) \
+            else True
+        comb_ratio = float(c["depth_ppm"] / depth_ppm)
+        comb_rep = bool(abs(c["period"] - P) / P < tol and 0.5 < comb_ratio < 2)
+    if n_inf > 0 or len(same) > 0:
+        repeats, basis = per_sector, "sectors"
+    elif comb_inf:
+        repeats, basis = comb_rep, "combined"
+    else:
+        repeats, basis = False, "none"
     return {
-        "n_other_sectors": n_other, "n_same_period": len(same), "n_alias_period": len(alias),
-        "depth_ratio": ratio,
-        "repeats": bool(n_other > 0 and len(same) >= max(2, int(np.ceil(n_other / 2))) and 0.5 < ratio < 2),
-        "repeats_at_alias": bool(len(alias) >= max(1, int(np.ceil(n_other / 2)))),
+        "n_other_sectors": len(other), "n_informative": n_inf, "n_same_period": len(same),
+        "n_same_informative": int(informative.index.isin(same.index).sum()), "n_alias_period": len(alias),
+        "depth_ratio": ratio, "combined_informative": comb_inf, "combined_repeats": comb_rep,
+        "combined_depth_ratio": comb_ratio, "basis": basis,
+        "testable": basis != "none",
+        "repeats": repeats,
+        "repeats_at_alias": bool(len(alias) >= 1 and len(alias) >= int(np.ceil(len(same) / 2))),
     }
 
 
@@ -360,9 +483,11 @@ def difference_image(tic_id: int, star: pd.Series, P: float, T0: float, dur_h: f
     }
     sky = tpf.wcs.pixel_to_world(gx, gy)
     res["strongest_loss_radec"] = [float(sky.ra.deg), float(sky.dec.deg)]
-    # off target: the centroid of the flux loss is significantly away from the star's own light, or the
-    # strongest loss in the cutout sits > 1.5 px away and is clearly stronger than at the target
-    res["off_target"] = bool((res["offset_sigma"] > 3 and off > 0.5)
+    # off target: the centroid of the flux loss is significantly away from the star's own light AND from its
+    # catalog position, or the strongest loss in the cutout sits > 1.5 px away and is clearly stronger than at
+    # the target. Both positions are needed: in a crowded field the out-of-transit light centroid is pulled
+    # towards the neighbours (TIC 214311908: 0.76 px from the light centroid, 0.30 px from the catalog position).
+    res["off_target"] = bool((res["offset_sigma"] > 3 and min(off, off_cat) > 0.5)
                              or (res["strongest_loss_dist_px"] > 1.5 and res["strongest_loss_snr"] > 5
                                  and res["loss_snr_at_target"] < 0.5 * res["strongest_loss_snr"]))
     np.savez_compressed(out_dir / f"diffimage_s{sector}.npz", diff=diff, oot=oot, target=[tx, ty],
@@ -460,12 +585,17 @@ def followup_one(tic_id: int, sector: int, skip_fit: bool = False, skip_fpp: boo
     s, star = known.loc[tic_id], targets.loc[tic_id]
     out_dir = FOLLOWUP_DIR / str(tic_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    summary = {"tic_id": tic_id, "discovery_sector": sector, "P": float(s.period), "T0": float(s.T0),
-               "depth_ppm": float(s.depth_ppm), "duration_h": float(s.duration_h)}
+    # keep the results of steps skipped in this run (--skip-fit / --skip-fpp re-run only the cheap checks)
+    old_path = out_dir / "summary.json"
+    summary = json.loads(old_path.read_text()) if old_path.exists() else {}
+    summary.update({"tic_id": tic_id, "discovery_sector": sector, "P": float(s.period), "T0": float(s.T0),
+                    "depth_ppm": float(s.depth_ppm), "duration_h": float(s.duration_h)})
 
     ms = fetch_sectors(tic_id, out_dir)
     summary["sectors"] = sorted(int(x) for x in ms["sector"].unique())
-    sec = sector_search(ms, s.period, star.rad, star.mass, sector, threads=threads)
+    sec = sector_search(ms, s.period, star.rad, star.mass, sector, threads=threads, dur_h=s.duration_h,
+                        depth_ppm=s.depth_ppm)
+    sec = pd.concat([sec, alias_search(ms, s.period, star.rad, star.mass, threads=threads)], ignore_index=True)
     sec.to_csv(out_dir / "sectors.csv", index=False)
     summary["sector_search"] = sec.to_dict("records")
     summary["repetition"] = repetition(sec, s.period, s.depth_ppm, sector)
