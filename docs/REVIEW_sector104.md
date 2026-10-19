@@ -239,5 +239,37 @@ predicted transits until 2027-04-18 (±2.3 min), 5 fully observable from souther
 (`data/followup/214311908/ephemeris.csv`); an EB on the 3.1″ star would show a ~41 % eclipse in
 a ≤ 2″ aperture.
 
+**Community databases (checked 2026-10-19, notebook §11).**
+
+- **ExoFOP:** lists no TOI, no CTOI, and no imaging, spectroscopy, time series, files or known
+  companions for the star. Nobody has followed it up.
+- **SIMBAD:** lists four Gaia DR3 eclipsing binaries within 3′. None can be the source:
+
+| EB (Gaia DR3) | separation | G | its light ÷ target's | P [d] | our P ÷ its P |
+|---|---|---|---|---|---|
+| …278208 | 26.7″ | 19.50 | 0.8 % | 0.3161 | 18.006 |
+| …739648 | 62.1″ | 20.00 | 0.5 % | 0.2609 | 21.81 |
+| …638720 | 167″ (8 px) | 14.99 | 52 % | 0.7503 | 7.59 |
+| …781120 | 168″ (8 px) | 17.13 | 7 % | 1.5953 | 3.57 |
+
+The near two can't make a 1.5 % dip even when totally eclipsed. The far two lie outside the
+aperture, where the PRF fit rejects every source (Δχ² > 300). None has a period that our period
+is a whole multiple of: 18.006 drifts by most of a day over six years, and the ephemeris holds to
+±2 min. A 0.3-day binary would also dip every 0.3 d, and the fold is flat outside the transit.
+These are the neighbours that could have killed the candidate, and all four are excluded.
+
+**Re-check of the pixel fit for every neighbour** (`docs/ctoi/TIC214311908/pixel_dchi2.csv`):
+- every Gaia source farther than 0.3 px (6″) that could make the dip is worse than the target at
+  Δχ² > 25. That includes a G = 17.0 star at 12.0″ (Δχ² ≈ 113), which is not in the FPP
+  exclusion list, so the 0.09 is conservative;
+- only the 3.1″ star stays open to the pixels (Δχ² ≈ 5).
+
+**CTOI draft:** `docs/ctoi/TIC214311908/` contains:
+- `CTOI_notes.md`: the form fields and the notes text;
+- three figures and `summary.pdf`, made by `scripts/ctoi_TIC214311908.py`.
+
+Form values: P = 5.691498 ± 0.000007 d, epoch 2460852.2989 ± 0.0012 BJD_TDB, depth
+15,100 ± 800 ppm, T14 = 1.71 ± 0.10 h, Rp = 4.85 ± 0.42 R⊕.
+
 **Updated result for sector 104:** 12 of 13 "new" signals rejected, one candidate (TIC
-214311908). Submitting it as a CTOI is the next decision; nothing has been submitted.
+214311908). The CTOI draft is ready; nothing has been submitted.

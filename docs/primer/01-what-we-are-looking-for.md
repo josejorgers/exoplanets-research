@@ -857,7 +857,11 @@ could this neighbour, even if it disappeared completely, produce a dip this deep
 removes its own light: a dip of neighbour's light ÷ our star's light, in a deblended light
 curve.) If not, it is
 innocent. If a neighbour is a *known* eclipsing binary with the same period, our signal is
-almost certainly its eclipse.
+almost certainly its eclipse. With a different period it is innocent, unless our period is an
+exact whole multiple of its period. A binary that eclipses every 0.32 days would put a dip in our
+light curve every 0.32 days, not one every 5.69 days. 5.69 days is 18.006 times 0.32 days, and
+that leftover 0.006 adds up: after six years of orbits the eclipses have drifted most of a day
+away from our dips.
 
 In our first run, this was the most common impostor among the signals that passed every
 automatic check: 7 of the 13.
@@ -993,15 +997,24 @@ sector 104 (details in [PLAN_milestone1.md](../PLAN_milestone1.md) and
    pipeline's top-ranked signal, and two had already looked like glitches by eye).
 6. **1** is left, TIC 214311908: a dip 4.9 times as wide as the Earth that comes back over six
    years and has the right duration and shape for this star. Its neighbours were checked one
-   by one. Modelling how each star's light spreads over the TESS pixels rules out the two
-   bright ones (a companion star 12 arcseconds away and a giant star 18 arcseconds away). Two
-   faint stars 3 and 6 arcseconds away are too close for the pixels to tell apart from our
-   star, but each would have to lose about half its light to make the dip. The dip's shape
-   argues against that, at roughly 3.5σ. The false-positive probability is about 0.1 once the
-   stars ruled out by the pixels are dropped, and 0.45 if they are not. That is below the 0.5
-   we set as the bar for reporting a candidate. It is not low enough to call it a planet:
-   observations from the ground, with images sharp enough to separate the stars, are still
-   needed.
+   by one:
+   - **The bright neighbours are ruled out.** Modelling how each star's light spreads over the
+     TESS pixels excludes a companion star 12 arcseconds away, a giant star 18 arcseconds away,
+     and every other star farther than about 6 arcseconds.
+   - **Three faint stars within 6 arcseconds** are too close for the pixels to separate
+     cleanly. Each would have to lose between a third of its light and nearly all of it to make
+     the dip. The dip's flat-bottomed shape argues against that, for the closest one at roughly
+     3.5σ.
+   - **Nobody has looked at this star before.** The community databases list no earlier
+     observations of it.
+   - **The two eclipsing binaries catalogued within an arcminute are innocent.** They are far
+     too faint to make the dip, and they eclipse at the wrong rhythm, every 0.32 and 0.26 days.
+
+   The false-positive probability is about 0.1 once the stars ruled out by the pixels are
+   dropped, and 0.45 if they are not. Both are below the 0.5 we set as the bar for reporting a
+   candidate. Neither is low enough to call it a planet: observations from the ground, with
+   images sharp enough to separate the stars, are still needed. A draft report for the TESS
+   community list is in [docs/ctoi/](../ctoi/TIC214311908/CTOI_notes.md).
 
 So no new planet yet, but one good candidate. That is the normal outcome of a search like this, and each run makes the
 checks better. The pipeline's job is to make sure that when a real one is there, it reaches the

@@ -78,6 +78,8 @@ Other documents:
 - `docs/NOTES_decisions.md`: a log of what was checked and what it changed (with negative
   results).
 - `docs/REVIEW_sector104.md`: the by-eye review of the sector-104 candidates.
+- `docs/ctoi/TIC214311908/`: CTOI draft for the one surviving candidate (form fields, notes,
+  summary figures made by `scripts/ctoi_TIC214311908.py`).
 
 ## Layout
 
