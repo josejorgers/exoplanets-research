@@ -5,6 +5,49 @@ Newest first. Each entry says how to re-check it.
 
 ---
 
+## 2026-10-19 — Follow-up in the pipeline; honest FPPs; completeness explained
+
+**1. Follow-up is a pipeline stage.** `python -m src.cli run` now runs `followup` between
+`known` and `report` on every survivor with `known_class` in {new, new_in_known_system}:
+repetition (all sectors, 2P search), difference image, and for the ones still standing the fit
+and TRICERATOPS. `verdict()` in `src/followup.py` is shared by notebook 9, notebook 10 and the
+report. Slow steps are reused when P and T0 are unchanged; `--verdict-only` recomputes verdicts
+from stored summaries. On sector 104 it reproduces every by-eye rejection (12 of 12). Re-check:
+`uv run --extra followup python -m src.followup --sector 104 --verdict-only`.
+
+**2. Difference image: noise from pseudo-transits.** The old per-transit scatter gave S/N 7–10
+on pure noise with 4 transits. The noise now comes from up to 60 difference images at the same
+ephemeris shifted off-transit; a loss counts above max(5, the null's 99th percentile) anywhere
+or max(3, …) within 3 px; otherwise `status = inconclusive`. Changed: 372868160 off → inconclusive
+(verdict unchanged: it does not repeat); 214311908 S/N 8.0 → 4.3 (threshold 4.25). Tests:
+`tests/test_diffimage.py`.
+
+**3. TRICERATOPS: background scenarios and neighbour parameters.** TRILEGAL had failed because
+its server omits the ZeroSSL intermediate certificate; `src/background.py` fetches it once,
+keeps verification on, and caches each population. TRICERATOPS gives neighbours without TIC
+parameters solar values; `src/neighbours.py` fills them from Gaia DR3 (the red giant near TIC
+214311908 went from 1 to ~93 R☉), drops TIC duplicates, and applies optional per-target
+exclusions from a PRF pixel fit (`data/followup/<tic>/pixel_excluded.json`). FPPs are the mean
+± std of 5 runs (scatter up to ±0.14). A verdict never says "candidate" without background
+scenarios. TIC 214311908: 0.64 → 0.45 ± 0.14 (no exclusions) → 0.09 ± 0.05 (pixel exclusions);
+control LHS 3844 b: 0.015 (one lucky run) → 0.07 ± 0.05. Tests: `tests/test_neighbours.py`.
+
+**4. Why the plan's completeness goal reads 73 % (notebook 8 §5.1–5.2).** The goal
+"> 80 % at ≥ 3 mmag, P < 10 d" fixes depth, not noise. Of 362 such injections, 98 are lost: 53
+below expected SNR 7 (faint stars, median scatter 23,000 ppm per point), 22 search losses (12
+where the star's own stronger signal wins; the second pass rescues 1), 23 vetting losses (14 just
+under the thresholds). The same box reaches 85 % at expected SNR ≥ 7 and 91 % at ≥ 10. Grazing
+orbits (b > 0.9, 14 % of transiting orbits), left out of the main run, pass 7 % of the time;
+excluding them overstates completeness by ~4 points overall and ~9 in the goal box. Better goal
+for later milestones: ≥ 80 % at expected SNR ≥ 7, P < 10 d.
+
+**5. Short gaps: no ramps, one QLP artefact.** Stacking 2,000 stars around the five 0.1–0.26-d
+gaps shows ≤ 170 ppm residual ramps (negligible). Every QLP light curve has a ~1,100-ppm, 5-h
+dip at BTJD 4197.62–4197.84 (in the raw QLP flux, not in SPOC); it attracts 1.4× more weak
+TLS peaks but no signal with SDE ≥ 10. No mask (notebook 3 §8.3).
+
+---
+
 ## 2026-10-04 — Vetting v3 and a broken follow-up repeat check
 
 A review of the primer article against the code found two vetting cuts that cost planets or

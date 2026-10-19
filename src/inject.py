@@ -4,6 +4,7 @@ Usage:
     uv run python -m src.inject --n 1000 --n-jobs 11      # sector from .env; resumable
     uv run python -m src.inject --n 50 --seed 1           # a quick test
     uv run python -m src.inject --revet --n-jobs 11       # recompute vet metrics after changing src/vet.py
+    uv run python -m src.inject --n 200 --seed 7 --b-min 0.9 --b-max 2 --tag _grazing   # grazing orbits
 
 For each injection: pick a random star whose real signal did NOT pass vetting, read its raw light
 curve with the same code as src.detrend (load_raw), multiply in a limb-darkened batman transit
@@ -68,8 +69,12 @@ def _worker_logging() -> None:
         logging.getLogger("search").setLevel(logging.WARNING)  # one line per injection is enough
 
 
-def draw_injections(stars: pd.DataFrame, n: int, seed: int, p_range, rp_range) -> pd.DataFrame:
-    """Random injection parameters. P and Rp log-uniform, b uniform in [0, 0.9], epoch uniform.
+def draw_injections(stars: pd.DataFrame, n: int, seed: int, p_range, rp_range,
+                    b_range=(0.0, 0.9)) -> pd.DataFrame:
+    """Random injection parameters. P and Rp log-uniform, b uniform in b_range, epoch uniform.
+
+    An upper b limit above 1 means grazing orbits: b is then drawn up to 1 + Rp/R* of that
+    injection (beyond it the planet misses the star).
 
     Each injection has its own generator seeded by (seed, inj_id), so injection i is the same
     whatever n is — a run with --n 50 can be extended with --n 1000 and resumes consistently.
@@ -78,6 +83,9 @@ def draw_injections(stars: pd.DataFrame, n: int, seed: int, p_range, rp_range) -
     for i in range(n):
         rng = np.random.default_rng([seed, i])
         star = stars.iloc[rng.integers(0, len(stars))]
+        p_inj = float(np.exp(rng.uniform(np.log(p_range[0]), np.log(p_range[1]))))
+        rp_inj = float(np.exp(rng.uniform(np.log(rp_range[0]), np.log(rp_range[1]))))
+        b_hi = min(b_range[1], 1 + rp_inj / (float(star["rad"]) * R_EARTH_PER_R_SUN))
         rows.append({
             "inj_id": i,
             "tic_id": int(star["tic_id"]),
@@ -85,9 +93,9 @@ def draw_injections(stars: pd.DataFrame, n: int, seed: int, p_range, rp_range) -
             "rad": float(star["rad"]),
             "mass": float(star["mass"]),
             "contratio": float(star["contratio"]),
-            "P_inj": float(np.exp(rng.uniform(np.log(p_range[0]), np.log(p_range[1])))),
-            "rp_inj_earth": float(np.exp(rng.uniform(np.log(rp_range[0]), np.log(rp_range[1])))),
-            "b_inj": float(rng.uniform(0, 0.9)),
+            "P_inj": p_inj,
+            "rp_inj_earth": rp_inj,
+            "b_inj": float(rng.uniform(b_range[0], b_hi)),
             "phase_inj": float(rng.uniform(0, 1)),  # epoch = first time + phase * P
         })
     return pd.DataFrame(rows)
@@ -213,6 +221,8 @@ def inject_sector(
     p_range=(0.3, 12.0),
     rp_range=(0.5, 6.0),
     chunk: int = 55,
+    b_range=(0.0, 0.9),
+    tag: str = "",
 ) -> pd.DataFrame:
     targets = pd.read_parquet(DATA_DIR / "targets" / f"sector_{sector}.parquet",
                               columns=["tic_id", "rad", "mass", "contratio"])
@@ -229,10 +239,10 @@ def inject_sector(
     )
     # stars with a real vetted signal would confuse "recovered" with "found the real planet"
     stars = stars[~stars["passes_all"] & stars["rad"].notna() & stars["mass"].notna()].reset_index(drop=True)
-    plan = draw_injections(stars, n, seed, p_range, rp_range)
+    plan = draw_injections(stars, n, seed, p_range, rp_range, b_range)
 
-    out_path = INJ_DIR / f"sector_{sector}_injrec.parquet"
-    lc_dir = INJ_DIR / "lc"
+    out_path = INJ_DIR / f"sector_{sector}_injrec{tag}.parquet"
+    lc_dir = INJ_DIR / f"lc{tag}"
     lc_dir.mkdir(parents=True, exist_ok=True)
     done = pd.read_parquet(out_path) if out_path.exists() else pd.DataFrame(columns=["inj_id"])
     todo = plan[~plan["inj_id"].isin(done["inj_id"])]
@@ -267,6 +277,9 @@ def main() -> None:
     p.add_argument("--p-max", type=float, default=12.0)
     p.add_argument("--rp-min", type=float, default=0.5, help="Earth radii")
     p.add_argument("--rp-max", type=float, default=6.0, help="Earth radii")
+    p.add_argument("--b-min", type=float, default=0.0)
+    p.add_argument("--b-max", type=float, default=0.9, help="> 1 allows grazing orbits (capped at 1 + Rp/R*)")
+    p.add_argument("--tag", default="", help="suffix for the output file and lc folder, e.g. _grazing")
     p.add_argument("--revet", action="store_true", help="only recompute vet metrics of stored injections")
     a = p.parse_args()
     if a.sector is None:
@@ -278,7 +291,8 @@ def main() -> None:
     if a.revet:
         revet_sector(a.sector, a.n_jobs)
     else:
-        inject_sector(a.sector, a.n, a.n_jobs, a.seed, (a.p_min, a.p_max), (a.rp_min, a.rp_max))
+        inject_sector(a.sector, a.n, a.n_jobs, a.seed, (a.p_min, a.p_max), (a.rp_min, a.rp_max),
+                      b_range=(a.b_min, a.b_max), tag=a.tag)
 
 
 if __name__ == "__main__":

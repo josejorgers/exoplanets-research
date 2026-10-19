@@ -847,6 +847,9 @@ whether the shift is several spreads bigger than its noise.
 **Which pixels lose light.** Going further, we can subtract the average picture taken outside
 the dips from the average picture taken during the dips. The pixels that lost light light up
 in this *difference image*, and they sit on the star that is really dimming (article 9).
+With only a few dips, noise alone can make some pixel look as if it lost light, so we also
+build the same picture at many times when no dip is expected. A pixel counts only if it loses
+more light than any of those fake dips manage to show by chance.
 
 **Is there a suspicious neighbour?** Star catalogues (mainly from the Gaia satellite) list
 every star near ours, with its brightness. Using the dilution formula backwards, we can ask:
@@ -971,6 +974,7 @@ through them in order:
 | 7. Report | How do we look at a candidate by eye? | [src/report.py](../../src/report.py) | [notebook 7](../../notebooks/pipeline-7-report-walkthrough.ipynb) |
 | 8. Calibration | Would we have noticed a real planet? How strict should the thresholds of section 1.9 be? | [src/inject.py](../../src/inject.py) | [notebook 8](../../notebooks/pipeline-8-injection-recovery.ipynb) |
 | 9. Follow-up | Does it repeat in other sectors (K)? Which pixels dim (J)? What is the chance it's a false positive? | [src/followup.py](../../src/followup.py) | [notebook 9](../../notebooks/pipeline-9-candidate-followup.ipynb) |
+| 10. Automatic follow-up | How does the pipeline run stage 9 on every surviving signal by itself and give each one a verdict? | [src/followup.py](../../src/followup.py), [src/cli.py](../../src/cli.py) | [notebook 10](../../notebooks/pipeline-10-automated-followup.ipynb) |
 
 ### What happened on the first run
 
@@ -983,18 +987,23 @@ sector 104 (details in [PLAN_milestone1.md](../PLAN_milestone1.md) and
 3. All **9** already-confirmed transiting planets around these stars were found by the
    search; **8** of them also passed every automatic check.
 4. After the automatic checks and removing what was already known, **13** new signals remained.
-5. Looked at by eye, **3** were explained at once (glitches, a flux step, and a V-shaped
-   eclipse with a large shift of the light centre). The other **10** went through the
-   other-sectors check (K) and the pixel check (J): **6** are eclipsing binaries or other blends
-   on neighbouring stars, and **3** never came back in the other sectors that could have shown
-   them (one of them was the pipeline's top-ranked signal).
+5. Every one of the 13 then went through the other-sectors check (K) and the pixel check (J)
+   automatically. **7** are eclipsing binaries or other blends on neighbouring stars, and **5**
+   never came back in the other sectors that could have shown them (one of them was the
+   pipeline's top-ranked signal, and two had already looked like glitches by eye).
 6. **1** is left, TIC 214311908: a dip 4.9 times as wide as the Earth that comes back over six
-   years, has the right duration and shape for this star, and sits on the star as far as TESS
-   pixels can tell. But three fainter stars lie within 3–5 arcseconds, a sixth of a pixel, and
-   any of them could be an eclipsing binary. The false-positive probability is about 0.6, too
-   high to report it as a candidate without ground-based observations that separate the stars.
+   years and has the right duration and shape for this star. Its neighbours were checked one
+   by one. Modelling how each star's light spreads over the TESS pixels rules out the two
+   bright ones (a companion star 12 arcseconds away and a giant star 18 arcseconds away). Two
+   faint stars 3 and 6 arcseconds away are too close for the pixels to tell apart from our
+   star, but each would have to lose about half its light to make the dip. The dip's shape
+   argues against that, at roughly 3.5σ. The false-positive probability is about 0.1 once the
+   stars ruled out by the pixels are dropped, and 0.45 if they are not. That is below the 0.5
+   we set as the bar for reporting a candidate. It is not low enough to call it a planet:
+   observations from the ground, with images sharp enough to separate the stars, are still
+   needed.
 
-So no new planet yet. That is the normal outcome of a search like this, and each run makes the
+So no new planet yet, but one good candidate. That is the normal outcome of a search like this, and each run makes the
 checks better. The pipeline's job is to make sure that when a real one is there, it reaches the
 top of the list, and that we can say *why* each of the others is not a planet.
 
@@ -1032,6 +1041,7 @@ top of the list, and that we can say *why* each of the others is not a planet.
 | **dilution** | a dip becoming shallower because extra, unaffected light is added to the measurement |
 | **centroid shift** | movement of the centre of light during a dip, a sign of a blend |
 | **candidate** | a signal that passed every check we can do; not yet a confirmed planet |
+| **false-positive probability (FPP)** | the chance, given the light curve, the star and its neighbours, that the dip is caused by something other than a planet on our star; computed with the TRICERATOPS program |
 | **TOI / CTOI** | TESS Object of Interest (official candidate list) / Community TOI (candidates submitted by anyone) |
 
 *Figures: synthetic data drawn by [figures/make_figures.py](figures/make_figures.py), which

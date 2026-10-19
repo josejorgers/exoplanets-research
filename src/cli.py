@@ -7,9 +7,14 @@ Usage:
     uv run python -m src.cli <step> [that step's own options]        # one step, e.g.:
     uv run python -m src.cli vet --rethreshold --snr-min 6
     uv run python -m src.cli inject --n 1000 --n-jobs 10
+    uv run python -m src.cli run --sector 104 --skip-followup        # stop at the vetted list + report
 
-Steps, in pipeline order: targets, fetch, detrend, search, vet, known, report
+Steps, in pipeline order: targets, fetch, detrend, search, vet, known, followup, report
 (plus inject, which is not part of `run`: it is a calibration of steps 3-5).
+followup checks every vetting survivor that no known object explains (all sectors of the star,
+difference image, and for the ones still standing a transit fit and TRICERATOPS) and gives each a
+verdict; the report then shows it and ranks rejected signals last. It needs the `followup` extra
+(`uv run --extra followup ...`) and network access; it uses at most half the cores.
 
 Each step skips stars whose output already exists unless it is given --force (`run --force`
 passes it to targets, fetch, detrend and search). Everything logged by the main process also
@@ -36,10 +41,10 @@ dotenv.load_dotenv()
 DATA_DIR = Path(
     os.environ.get("DATA_DIR", Path(__file__).resolve().parents[1] / "data")
 )
-STEPS = ["targets", "fetch", "detrend", "search", "vet", "known", "report"]
+STEPS = ["targets", "fetch", "detrend", "search", "vet", "known", "followup", "report"]
 EXTRA = ["inject"]
 PACKAGES = ["numpy", "pandas", "astropy", "astroquery", "lightkurve", "wotan", "transitleastsquares",
-            "tess-point", "batman-package", "scipy", "matplotlib"]
+            "tess-point", "batman-package", "scipy", "matplotlib", "emcee", "triceratops"]
 
 log = logging.getLogger("cli")
 
@@ -99,9 +104,16 @@ def step_args(step: str, sector: int, n_jobs: int, force: bool) -> list[str]:
         args += ["--n-jobs", str(min(n_jobs, 4))]  # MAST rate-limits
     elif step in ("detrend", "search", "vet"):
         args += ["--n-jobs", str(n_jobs)]
+    elif step == "followup":
+        args += ["--n-jobs", str(max(1, min(n_jobs, (os.cpu_count() or 2) // 2)))]
     if force and step in ("targets", "fetch", "detrend", "search"):
         args.append("--force")
     return args
+
+
+def selected_steps(start: str, stop: str, skip_followup: bool = False) -> list[str]:
+    steps = STEPS[STEPS.index(start): STEPS.index(stop) + 1]
+    return [s for s in steps if not (skip_followup and s == "followup")]
 
 
 def main() -> None:
@@ -122,6 +134,7 @@ def main() -> None:
     r.add_argument("--from", dest="start", choices=STEPS, default=STEPS[0])
     r.add_argument("--to", dest="stop", choices=STEPS, default=STEPS[-1])
     r.add_argument("--force", action="store_true", help="redo targets/fetch/detrend/search for every star")
+    r.add_argument("--skip-followup", action="store_true", help="leave out the follow-up stage")
     for s in STEPS + EXTRA:
         sub.add_parser(s, help=f"run src.{s} (all further options are passed to it)", add_help=False)
     a = p.parse_args()
@@ -129,7 +142,7 @@ def main() -> None:
         p.error("no --sector given and SECTOR not set in .env")
     log_path = setup_logging(a.sector)
     record_versions(a.sector)
-    steps = STEPS[STEPS.index(a.start): STEPS.index(a.stop) + 1]
+    steps = selected_steps(a.start, a.stop, a.skip_followup)
     log.info("sector %d: running %s (log: %s)", a.sector, " -> ".join(steps), log_path)
     t0 = time.time()
     for s in steps:

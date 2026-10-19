@@ -4,8 +4,9 @@ A pipeline that searches one TESS sector for transiting planets around nearby M 
 (< 100 pc), vets the signals, removes everything already known, and produces a ranked report
 of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sector 104** (status and results at
 the top of that file: all 9 confirmed transiting planets in the target list found, 8 of them
-passing vetting and labelled known; 13 new signals: 12 explained by follow-up, one unresolved
-among close neighbours; no CTOI).
+passing vetting and labelled known; 13 new signals: 12 rejected by the automatic follow-up,
+one candidate, TIC 214311908, with FPP 0.09 ± 0.05 once neighbours excluded by the pixel fit
+are dropped; not yet submitted as a CTOI).
 
 ## Pipeline
 
@@ -17,20 +18,23 @@ among close neighbours; no CTOI).
 | 4 | `src/search.py` | Transit Least Squares on every light curve, no threshold | `data/search/sector_N.parquet` |
 | 5 | `src/vet.py` | 12 hard physical tests + 4 soft flags per signal | `data/search/sector_N_vetted.parquet` |
 | 6 | `src/known.py` | cross-match with TOI, CTOI, confirmed planets, TESS & Gaia EBs, neighbours | `data/search/sector_N_known.parquet` |
-| 7 | `src/report.py` | one PDF page per candidate + run summary | `data/reports/sector_N.pdf` |
+| 7 | `src/followup.py` | every new survivor: other sectors (incl. 2P), difference image, MCMC fit, Gaia, TRICERATOPS FPP with TRILEGAL background (`src/background.py`, `src/neighbours.py`); verdict | `data/followup/{tic}/`, `sector_N_followup.parquet` |
+| 8 | `src/report.py` | one PDF page per candidate (with follow-up verdict) + run summary | `data/reports/sector_N.pdf` |
 | — | `src/inject.py` | injection-recovery: completeness of steps 3–5 | `data/injection/sector_N_injrec.parquet` |
-| — | `src/followup.py` | other sectors, MCMC fit, difference image, Gaia, TRICERATOPS FPP | `data/followup/{tic}/` |
+| — | `src/pixelfit.py` | PRF fit of the transit's difference image against each neighbour (one-candidate deep dives) | notebook-specific |
 
 ## Running
 
 ```bash
 uv sync                                              # environment (Python 3.14)
 echo "SECTOR=104" >> .env                            # default sector for every step
-uv run python -m src.cli run --sector 104 --n-jobs 8 # the whole chain (hours: fetch and search dominate)
+uv run --extra followup python -m src.cli run --sector 104 --n-jobs 8 # the whole chain incl. follow-up
+uv run python -m src.cli run --sector 104 --skip-followup                # stop at the vetted list + report
 uv run python -m src.cli run --from vet              # re-run from a step
 uv run python -m src.cli vet --rethreshold --snr-min 6   # any step with its own options
 uv run python -m src.cli inject --n 1000 --n-jobs 10     # calibration (not part of `run`)
-uv run --extra followup python -m src.followup --tics 306101698   # §12 follow-up of single candidates
+uv run --extra followup python -m src.followup --tics 306101698   # follow-up of single candidates
+uv run python -m src.followup --sector 104 --verdict-only        # recompute verdicts from stored results
 uv run pytest -m "not slow"                          # unit tests (seconds)
 uv run pytest -m slow                                # end-to-end on LHS 3844 (needs data/, ~1 min)
 ```
@@ -61,6 +65,8 @@ not astronomy:
 | `notebooks/pipeline-7-report-walkthrough.ipynb` | how to read a candidate page; derived planet properties |
 | `notebooks/pipeline-8-injection-recovery.ipynb` | completeness, and choosing the thresholds |
 | `notebooks/pipeline-9-candidate-followup.ipynb` | from candidate to CTOI: other sectors, pixels, transit fit, false-positive probability |
+| `notebooks/pipeline-10-automated-followup.ipynb` | the follow-up stage in the pipeline: which signals, verdict rules, CLI |
+| `notebooks/candidate-TIC214311908.ipynb` | deep dive on the one surviving candidate: neighbours, PRF pixel fit, Gaia, ephemeris for ground-based observers |
 
 Before the notebooks, `docs/primer/` has plain-language articles for readers with no
 astronomy background, starting with `01-what-we-are-looking-for.md` (what a planet looks like

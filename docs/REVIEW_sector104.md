@@ -189,8 +189,55 @@ out-of-transit light centroid, which the neighbours pull away from the star. The
 rule now requires the loss to be away from the catalog position as well; no other verdict
 changed.)
 
-**Updated result for sector 104:** 12 of the 13 "new" candidates are explained (7 eclipsing
+**Result as of 2026-10-04 (superseded below):** 12 of the 13 "new" candidates are explained (7 eclipsing
 binaries or blends on neighbours counting the V-shaped TIC 218663210, 3 that do not repeat, 2
 systematics); one, TIC 214311908, is an unresolved candidate that TESS data alone cannot
 settle. No CTOI submission.
 
+
+## Automatic follow-up and honest FPPs (2026-10-19)
+
+The follow-up is now a pipeline stage (`python -m src.cli followup`, notebook 10): every
+vetting survivor that no known object explains goes through all sectors (incl. the 2P search),
+the difference image and, if still standing, the fit and TRICERATOPS, and gets a verdict
+(`data/followup/sector_104_followup.parquet`, shown on the report pages). Three things changed
+underneath (`docs/NOTES_decisions.md`, 2026-10-19):
+
+- the difference image measures its noise from pseudo-transits, and says "inconclusive"
+  instead of "off target" when the loss is not above what noise produces;
+- TRICERATOPS now includes the background scenarios (TRILEGAL works again), neighbours without
+  TIC parameters get Gaia-based ones instead of solar ones, duplicate TIC entries are dropped,
+  and stars excluded by a PRF pixel fit can be removed from the scenarios; FPPs are the mean
+  ± std of 5 runs;
+- a verdict never says "candidate" from an FPP without background scenarios.
+
+All 12 signals rejected above are rejected automatically: 7 blends or EBs on neighbours
+(306101698, 229804549, 61615837, 88516648, 218663210 off target; 424913827 an EB found at half
+its period; 64336445 density 0.10×), and 5 that do not repeat (372868160, 161313862, 394585043,
+and the two systematics 231888176 and 389127976). 372868160's difference image changed from
+"off target" (a noise pixel 10 px away) to inconclusive; its verdict rests on repetition.
+
+**TIC 214311908 is now a candidate.** The deep dive (`notebooks/candidate-TIC214311908.ipynb`):
+
+| test | result |
+|---|---|
+| TESS data | sectors 12, 39, 66, 93, 103, 104, FFIs only; no 2-min data, no later sector |
+| Gaia, target | RUWE 1.08, no multi-peak or binary solution: looks single |
+| co-moving companion, 11.7″ (G 14.65, itself double: RUWE 13.7) | excluded by the PRF fit of the difference image, Δχ² ≈ 86 (~9σ) over sectors 39–104 |
+| red giant TIC 214311906, 17.8″ (Mira-like LPV, P ≈ 294 d) | excluded, Δχ² ≈ 209 |
+| faint stars at 3.1″ and 5.7″ | pixels cannot separate the 3.1″ star from the target; each would need a 41 % / 57 % eclipse, and the transit shape allows a host at most 3.1 mag fainter (they are 3.7 and 4.0): excluded at ≈ 3.5σ |
+| free-position fit | 0.07–0.37 px from the target in every sector |
+| difference image (null-calibrated, s104) | on target, but just at threshold (S/N 4.3 vs 4.25) |
+| fit | Rp 4.9 R⊕, density 0.94× the TIC value |
+| FPP | **0.09 ± 0.05** with the 4 pixel-excluded neighbours removed; 0.45 ± 0.14 without (old 0.64 had no background scenarios and a solar-radius giant) |
+| ExoFOP | not a TOI or CTOI (lists of 2026-10-18); imaging could not be checked by script |
+
+It passes our CTOI bar (FPP < 0.5) with or without the pixel exclusions, but it is not
+validated (FPP > 0.015). Still open: an unresolved companion closer than ~1″, and an EB on the
+3.1″ star (≈ 3.5σ). A 1.4 % transit on a T ≈ 13 star is easy for small telescopes: 32
+predicted transits until 2027-04-18 (±2.3 min), 5 fully observable from southern sites
+(`data/followup/214311908/ephemeris.csv`); an EB on the 3.1″ star would show a ~41 % eclipse in
+a ≤ 2″ aperture.
+
+**Updated result for sector 104:** 12 of 13 "new" signals rejected, one candidate (TIC
+214311908). Submitting it as a CTOI is the next decision; nothing has been submitted.

@@ -10,7 +10,9 @@ Input : data/search/sector_{N}_known.parquet  (from src.known: vet metrics + kno
         data/targets/sector_{N}_manifest.parquet (light-curve author)
         data/lc_flat/{tic}.parquet               (raw + flattened light curves)
         data/search/sector_{N}_vetted_meta.json  (momentum dumps)
-Output: data/reports/sector_{N}.pdf             summary page + one page per signal, new candidates first
+        data/followup/sector_{N}_followup.parquet (optional, from src.followup: follow-up verdicts)
+Output: data/reports/sector_{N}.pdf             summary page + one page per signal, new candidates first;
+                                                within a class, signals rejected by follow-up come last
         data/reports/sector_{N}/{rank:02d}_{tic}.png  the same pages as PNG (for quick viewing)
         data/reports/sector_{N}_candidates.csv  one row per page: ephemeris, derived planet properties, flags
         data/reports/sector_{N}_summary.json    counts at every step of the pipeline
@@ -27,6 +29,7 @@ import argparse
 import json
 import logging
 import os
+import textwrap
 import warnings
 from pathlib import Path
 
@@ -41,6 +44,7 @@ import pandas as pd  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 from transitleastsquares import cleaned_array, transitleastsquares  # noqa: E402
 
+from src.followup import CATEGORIES, REJECTED  # noqa: E402
 from src.known import CLASS_ORDER  # noqa: E402
 from src.search import tls_params  # noqa: E402
 from src.vet import HARD, THRESH, _phase_time  # noqa: E402
@@ -239,11 +243,41 @@ def panel_table(ax, s, d):
             transform=ax.transAxes)
 
 
+def fpp_text(s) -> str:
+    """FPP with its scatter and how it was computed: background scenarios or not (without them it is
+    optimistic), and the value without the pixel-based neighbour exclusions when there are any."""
+    t = f"FPP {s.fu_FPP:.3f}" + (f" ± {s.fu_FPP_std:.3f}" if np.isfinite(s.fu_FPP_std) else "")
+    how = ["with background" if s.fu_fpp_background in (True, 1) else "no background: optimistic"]
+    n_ex = int(s.fu_n_fpp_excluded) if np.isfinite(s.fu_n_fpp_excluded) else 0
+    if n_ex:
+        how.append(f"{n_ex} neighbour{'s' * (n_ex > 1)} excluded by pixels; without: {s.fu_FPP_without_exclusions:.3f}")
+    return f"{t} ({'; '.join(how)})"
+
+
+def followup_line(s) -> tuple[str, str, str] | None:
+    """(verdict, the numbers behind it, colour) of a page's signal, or None if not followed up."""
+    cat = s.get("fu_category")
+    if not isinstance(cat, str):
+        return None
+    if cat == "error":
+        return f"FOLLOW-UP: {s.fu_verdict}", "", "C3"
+    rep = ("untestable" if pd.isna(s.fu_repeats) else
+           f"{'repeats' if s.fu_repeats else 'does not repeat'} ({int(s.fu_n_same_period)} of "
+           f"{int(s.fu_n_other_sectors)} other sectors, {int(s.fu_n_informative)} informative, by {s.fu_repetition_basis})")
+    bits = [rep, f"pixels {s.fu_pixels}" + (f" ({s.fu_offset})" if isinstance(s.fu_offset, str) else "")]
+    if np.isfinite(s.fu_density_ratio):
+        bits.append(f"ρ/ρ_TIC {s.fu_density_ratio:.2f}")
+    if np.isfinite(s.fu_FPP):
+        bits.append(fpp_text(s))
+    color = "C3" if cat in REJECTED else "C2" if cat in ("validated", "candidate") else "C1"
+    return f"FOLLOW-UP: {s.fu_verdict}", ";  ".join(bits), color
+
+
 def candidate_page(s, star, lc: pd.DataFrame, tls: dict | None, dumps, rank: int, sector: int, author: str):
     """One figure (US letter, portrait) for one signal. s = row of the known table, star = target row."""
     d = derived(s.period, star.rad, star.mass, star.teff)
     fig = plt.figure(figsize=(8.5, 11))
-    gs = fig.add_gridspec(5, 3, height_ratios=[0.7, 1, 1, 1.25, 1.25], hspace=0.6, wspace=0.32,
+    gs = fig.add_gridspec(5, 3, height_ratios=[1.05, 1, 1, 1.25, 1.25], hspace=0.6, wspace=0.32,
                           left=0.07, right=0.97, top=0.97, bottom=0.04)
     head = fig.add_subplot(gs[0, :])
     head.axis("off")
@@ -251,19 +285,23 @@ def candidate_page(s, star, lc: pd.DataFrame, tls: dict | None, dumps, rank: int
     known = s.known_class + (f" — {s.known_ids}" if s.known_ids else "") + (
         f" — neighbour: {s.nb_id} at {s.nb_sep_arcsec:.0f}\" (likely source: {s.likely_source})" if s.nb_id else "")
     head.text(0, 1, f"#{rank}  TIC {s.tic_id}   sector {sector}   {author}", fontsize=13, weight="bold", va="top")
-    head.text(0, 0.62,
+    head.text(0, 0.70,
               f"P = {s.period:.5f} d   T0 = {s.T0:.4f} BTJD   depth = {s.depth_ppm:.0f} ppm   "
               f"duration = {s.duration_h:.2f} h   Rp = {s.rp_earth:.2f} R⊕   SNR = {s.snr:.1f}   SDE = {s.SDE:.1f}",
               fontsize=8.5, va="top")
-    head.text(0, 0.36,
+    head.text(0, 0.51,
               f"star: Tmag {star.tmag:.2f}   Teff {star.teff:.0f} K   R {star.rad:.3f} R☉   M {star.mass:.3f} M☉   "
               f"d {star.dist_pc:.1f} pc   contratio {star.contratio:.2f}", fontsize=8.5, va="top")
     color = "C2" if s.passes_all and s.known_class in ("new", "new_in_known_system") else "C3" if not s.passes_all else "C1"
-    head.text(0, 0.1, f"{verdict}   |   flags: {s['flags'] or '-'}   |   {known}", fontsize=8, va="top", color=color)
-    head.text(0, -0.16,
+    head.text(0, 0.32, f"{verdict}   |   flags: {s['flags'] or '-'}   |   {known}", fontsize=8, va="top", color=color)
+    head.text(0, 0.13,
               f"planet if circular: a = {d['a_au']:.4f} au = {d['a_rs']:.1f} R*   S = {d['insolation_earth']:.1f} S⊕   "
               f"Teq = {d['teq_k']:.0f} K   (β = {s.beta:.2f}, {s.n_transits_used} transits with data)",
               fontsize=8, va="top")
+    fl = followup_line(s)
+    if fl:
+        head.text(0, -0.07, fl[0], fontsize=8, va="top", color=fl[2], weight="bold")
+        head.text(0, -0.22, textwrap.fill(fl[1], 150), fontsize=7.5, va="top", color=fl[2], linespacing=1.3)
     head.text(1, 1, f"exofop.ipac.caltech.edu/tess/target.php?id={s.tic_id}", fontsize=7, ha="right", va="top",
               color="C0")
 
@@ -306,6 +344,8 @@ def run_summary(sector: int, known_tab: pd.DataFrame) -> dict:
         "classes_of_candidates": {k: int(v) for k, v in cand["known_class"].value_counts().items()},
         "new_candidates": int(cand["known_class"].isin(["new", "new_in_known_system"]).sum()),
         "new_without_flags": int((cand["known_class"].isin(["new", "new_in_known_system"]) & (cand["n_flags"] == 0)).sum()),
+        "followup": ({k: int(v) for k, v in cand["fu_category"].value_counts().items()}
+                     if "fu_category" in cand else {}),
         "thresholds": THRESH,
     }
 
@@ -332,17 +372,37 @@ def summary_page(summary: dict, cand: pd.DataFrame):
     cls = summary["classes_of_candidates"]
     fig.text(0.07, 0.47, "Signals passing all hard vetting tests, by known-object class:", fontsize=10, weight="bold")
     fig.text(0.07, 0.445, "   ".join(f"{k}: {cls.get(k, 0)}" for k in CLASS_ORDER if cls.get(k, 0)), fontsize=9)
-    rows = ["rank  TIC          class          P [d]    depth[ppm]  Rp[R⊕]   SNR   flags"]
+    fu = summary.get("followup") or {}
+    if fu:
+        fig.text(0.07, 0.43, "Follow-up of the unexplained ones (all sectors, pixels, fit, FPP): " +
+                 "   ".join(f"{k}: {fu[k]}" for k in CATEGORIES if fu.get(k)), fontsize=8)
+    rows = ["rank  TIC          class          P [d]    depth[ppm]  Rp[R⊕]   SNR   follow-up       flags"]
     for r in cand.itertuples():
+        cat = getattr(r, "fu_category", None)
         rows.append(f"{r.rank:4d}  {r.tic_id:<11d}  {r.known_class:<13s} {r.period:8.4f} {r.depth_ppm:10.0f}  "
-                    f"{r.rp_earth:6.2f} {r.snr:6.1f}   {r.flags or '-'}")
-    fig.text(0.07, 0.42, "\n".join(rows[:60]), va="top", family="DejaVu Sans Mono", fontsize=5.6)
+                    f"{r.rp_earth:6.2f} {r.snr:6.1f}   {cat if isinstance(cat, str) else '-':<14s}  {r.flags or '-'}")
+    fig.text(0.07, 0.41, "\n".join(rows[:60]), va="top", family="DejaVu Sans Mono", fontsize=5.6)
     return fig
 
 
 # ------------------------------------------------------------------------------------------------
 # sector
 # ------------------------------------------------------------------------------------------------
+
+
+def add_followup(tab: pd.DataFrame, sector: int) -> pd.DataFrame:
+    """Join the follow-up table (columns prefixed fu_); all-NaN columns when follow-up has not been run."""
+    path = DATA_DIR / "followup" / f"sector_{sector}_followup.parquet"
+    cols = ["category", "verdict", "repeats", "n_same_period", "n_other_sectors", "n_informative",
+            "repetition_basis", "pixels", "offset", "density_ratio", "FPP", "FPP_std", "fpp_background",
+            "n_fpp_excluded", "FPP_without_exclusions"]
+    fu = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=["tic_id"] + cols)
+    fu = fu.reindex(columns=["tic_id"] + cols).rename(columns={c: f"fu_{c}" for c in cols})
+    fu["tic_id"] = fu["tic_id"].astype(tab["tic_id"].dtype)
+    out = tab.merge(fu, on="tic_id", how="left")
+    for c in ("fu_density_ratio", "fu_FPP", "fu_FPP_std", "fu_n_fpp_excluded", "fu_FPP_without_exclusions"):
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out
 
 
 def report_sector(sector: int, extra_tics: list[int] | None = None, n_jobs: int = 4) -> pd.DataFrame:
@@ -353,12 +413,17 @@ def report_sector(sector: int, extra_tics: list[int] | None = None, n_jobs: int 
     meta_path = DATA_DIR / "search" / f"sector_{sector}_vetted_meta.json"
     dumps = json.loads(meta_path.read_text())["momentum_dumps_btjd"] if meta_path.exists() else []
 
+    tab = add_followup(tab, sector)
     sel = tab["passes_all"] | tab["tic_id"].isin(extra_tics or [])
     pages = tab[sel].copy()
     pages["_order"] = pages["known_class"].map(CLASS_ORDER.index)
-    # new candidates first, then by class; within a class passing ones first, fewest flags, highest SNR
-    pages = pages.sort_values(["_order", "passes_all", "n_flags", "snr"], ascending=[True, False, True, False])
-    pages = pages.drop(columns="_order").reset_index(drop=True)
+    # follow-up verdict, best first; signals without one sit with the "incomplete" ones
+    pages["_fu"] = pages["fu_category"].map(lambda c: CATEGORIES.index(c if isinstance(c, str) else "incomplete"))
+    # new candidates first, then by class; within a class passing ones first, then by follow-up verdict
+    # (rejected ones last), fewest flags, highest SNR
+    pages = pages.sort_values(["_order", "passes_all", "_fu", "n_flags", "snr"],
+                              ascending=[True, False, True, True, False])
+    pages = pages.drop(columns=["_order", "_fu"]).reset_index(drop=True)
     pages.insert(0, "rank", np.arange(1, len(pages) + 1))
     log.info("sector %d: %d pages (%d passing vetting, %d extra)", sector, len(pages), int(pages["passes_all"].sum()),
              int((~pages["passes_all"]).sum()))
@@ -388,7 +453,8 @@ def report_sector(sector: int, extra_tics: list[int] | None = None, n_jobs: int 
             plt.close(fig)
             rows.append({**{k: s[k] for k in ["rank", "tic_id", "known_class", "passes_all", "failed", "flags", "period",
                                                "T0", "duration_h", "depth_ppm", "rp_earth", "snr", "SDE", "known_ids",
-                                               "nb_id", "likely_source"]},
+                                               "nb_id", "likely_source", "fu_category", "fu_verdict", "fu_FPP",
+                                               "fu_FPP_without_exclusions"]},
                          "tmag": star.tmag, "teff": star.teff, "rad": star.rad, "mass": star.mass,
                          "dist_pc": star.dist_pc, **d,
                          "exofop": f"https://exofop.ipac.caltech.edu/tess/target.php?id={s.tic_id}"})

@@ -1,6 +1,6 @@
 # Milestone 1 — Automated transit search for new candidates in one TESS sector
 
-## Status (2026-10-04): milestone 1 run on sector 104
+## Status (2026-10-19): milestone 1 run on sector 104
 
 | plan step | module | status |
 |---|---|---|
@@ -13,7 +13,7 @@
 | 7 report | `src/report.py` | done: PDF + PNG per candidate + summary |
 | 8 CLI & tests | `src/cli.py`, `tests/` | done: `python -m src.cli run`, 33 tests incl. end-to-end on LHS 3844 |
 | §6 injection-recovery | `src/inject.py` | done: 1,000 injections; thresholds tuned (SDE ≥ 10, SNR ≥ 6.5) |
-| §12 follow-up | `src/followup.py` | done for 10 of the 13 "new" candidates (repetition + pixels; full chain on 7; the other 3 are systematics or V-shaped by eye) + a known-planet control |
+| §12 follow-up | `src/followup.py` | **automated** as a pipeline step (`followup`, notebook 10) on every new survivor: repetition (incl. 2P), null-calibrated difference image, fit, TRICERATOPS with background scenarios and Gaia-filled neighbours; verdict in the report |
 
 **Definition of done** (§11):
 
@@ -28,14 +28,18 @@
   (`data/reports/sector_104.pdf`), graded in `docs/REVIEW_sector104.md`;
 - *injection/recovery numbers documented*: yes (notebook 8, `docs/NOTES_decisions.md`). 50 %
   completeness at an expected SNR of 8.7 after vetting. The §6 target "> 80 % at 3 mmag, P < 10 d"
-  is **not** met (73 %).
+  is **not** met as written (73 %; ~65 % counting grazing orbits): half the losses are faint
+  stars where 3 mmag is below SNR 7. At expected SNR ≥ 7 the same box reaches 85 %
+  (notebook 8 §5.1–5.2).
 
-**Science outcome:** no CTOI. Of the 13 "new" signals, 7 are eclipsing binaries or blends on
-neighbouring stars, 3 do not repeat in the other sectors that could show them, and 2 are
-systematics. One, TIC 214311908 (P = 5.69 d, 4.9 R⊕), repeats over six years with a
-consistent stellar density but sits among 3–5″ neighbours that TESS cannot separate (FPP 0.64);
-it needs ground-based photometry (notebook 9 §7). Next steps: run the repetition and
-difference-image checks automatically on every survivor, and run further sectors.
+**Science outcome:** one candidate, not yet submitted. Of the 13 "new" signals, the automatic
+follow-up rejects 12 (7 eclipsing binaries or blends on neighbouring stars, 5 that do not
+repeat, two of them systematics by eye). TIC 214311908 (P = 5.69 d, 4.9 R⊕) repeats over six
+years, its bright neighbours are excluded by a PRF pixel fit, and its FPP is 0.09 ± 0.05
+(0.45 ± 0.14 without the pixel exclusions): it passes the CTOI bar but not validation. An EB on
+the 3.1″ neighbour (≈ 3.5σ) and a companion closer than ~1″ remain open
+(`notebooks/candidate-TIC214311908.ipynb`, ephemeris for ground-based observers in
+`data/followup/214311908/ephemeris.csv`). Next steps: decide on the CTOI, run further sectors.
 
 Decision log: `docs/NOTES_decisions.md`. Walkthrough notebooks for every step: `notebooks/`.
 

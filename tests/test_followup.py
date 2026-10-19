@@ -55,3 +55,48 @@ def test_eb_at_half_period_is_deeper_at_2P():
               ("s066@2P", 2 * P, 7.0, 4300, np.nan), ("s093@2P", 2 * P, 6.5, 4250, np.nan)]
     r = repetition(_sec_table(planet), P, 4300, 104)
     assert r["repeats"] and not r["repeats_at_alias"]
+
+
+def test_trilegal_roundtrip_for_triceratops(tmp_path):
+    """Our TRILEGAL parser + writer must give a file triceratops' own reader accepts, with no star lost
+    (it drops the last two rows, which its own writer fills with the termination comment)."""
+    from triceratops.funcs import trilegal_results
+
+    from src.background import parse_trilegal, write_triceratops_csv
+
+    cols = "#Gc logAge [M/H] m_ini logL logTe logg m-M0 Av m2/m1 mbol TESS J H Ks Mact"
+    rows = ["1 9.1 0.0 0.40 -1.5 3.55 4.8 10.2 0.1 0.0 14.6 15.5 14.0 13.4 13.2 0.40",
+            "1 9.5 -0.2 0.80 -0.3 3.70 4.6 12.0 0.2 0.0 13.5 16.8 15.6 15.2 15.1 0.80",
+            "2 10.0 -0.5 0.90 0.1 3.72 4.4 14.0 0.3 0.0 14.0 18.9 17.8 17.4 17.3 0.89"]
+    text = "\n".join([cols, *rows, "#TRILEGAL normally terminated"]) + "\n"
+    df = parse_trilegal(text)
+    assert len(df) == 3 and df["TESS"].tolist() == [15.5, 16.8, 18.9]
+    f = tmp_path / "trilegal.csv"
+    write_triceratops_csv(df, f)
+    tmags = trilegal_results(str(f), 16.0)[0]
+    assert np.allclose(tmags, [16.8, 18.9])          # only stars fainter than the target, none dropped
+
+
+def test_trilegal_incomplete_output_rejected():
+    import pytest
+
+    from src.background import parse_trilegal
+
+    with pytest.raises(RuntimeError, match="incomplete"):
+        parse_trilegal("#Gc TESS J H Ks Mact logg logTe [M/H]\n1 15 14 13 13 0.4 4.8 3.55 0.0\n")
+    with pytest.raises(RuntimeError, match="lacks columns"):
+        parse_trilegal("#Gc J H Ks\n1 14 13 13\n#TRILEGAL normally terminated\n")
+
+
+def test_scenario_groups_partition_triceratops_scenarios():
+    """Every TRICERATOPS scenario belongs to exactly one origin group, so the groups sum to 1."""
+    from src.followup import SCENARIO_GROUPS, scenario_groups
+
+    names = ["TP", "EB", "EBx2P", "PTP", "PEB", "PEBx2P", "STP", "SEB", "SEBx2P", "DTP", "DEB", "DEBx2P",
+             "BTP", "BEB", "BEBx2P", "NTP", "NEB", "NEBx2P"]
+    flat = [s for sc in SCENARIO_GROUPS.values() for s in sc]
+    assert sorted(flat) == sorted(set(names))
+    probs = pd.DataFrame({"scenario": names, "ID": "1", "prob": np.full(len(names), 1 / len(names))})
+    g = scenario_groups(probs)
+    assert abs(sum(g.values()) - 1) < 1e-12
+    assert abs(g["background"] - 3 / len(names)) < 1e-12
