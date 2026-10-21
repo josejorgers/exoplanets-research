@@ -123,3 +123,4 @@ fully observable from CTIO, SAAO or Siding Spring between February and April 202
 - `ctoi_parameters.json`
 - Analysis notebook: `notebooks/candidate-TIC214311908.ipynb` in
   https://github.com/josejorgers/exoplanets-research
+- Archived release (Zenodo): https://doi.org/10.5281/zenodo.23530668 (v0.1.0: 10.5281/zenodo.23530669)

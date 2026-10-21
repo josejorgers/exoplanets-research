@@ -16,6 +16,7 @@ type: software
 version: "0.1.0"
 date-released: "2026-10-21"
 license: MIT
+doi: "10.5281/zenodo.23530668"
 repository-code: "https://github.com/josejorgers/exoplanets-research"
 keywords:
   - exoplanets

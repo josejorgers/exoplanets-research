@@ -1,5 +1,7 @@
 # Exoplanet transit search in TESS M dwarfs
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23530668.svg)](https://doi.org/10.5281/zenodo.23530668)
+
 A pipeline that searches one TESS sector for transiting planets around nearby M dwarfs
 (< 100 pc), vets the signals, removes everything already known, and produces a ranked report
 of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sector 104** (status and results at
@@ -95,4 +97,6 @@ data/       everything produced (git-ignored)
 
 Code (`src/`, `scripts/`, `tests/`) is under the MIT licence (`LICENSE`). Documents, figures and
 notebooks (`docs/`, `notebooks/`) are under CC BY 4.0 (`LICENSE-docs`). To cite this work, use
-`CITATION.cff` (GitHub's "Cite this repository" button) or the Zenodo DOI of the release.
+`CITATION.cff` (GitHub's "Cite this repository" button) or the Zenodo DOI
+[10.5281/zenodo.23530668](https://doi.org/10.5281/zenodo.23530668) (always resolves to the latest
+version; v0.1.0 is 10.5281/zenodo.23530669).
