@@ -1,7 +1,10 @@
 # CTOI draft: TIC 214311908
 
-**Status: draft, not submitted.** Submit through ExoFOP (*Upload → CTOI*) with your own account.
-Re-check the target page (https://exofop.ipac.caltech.edu/tess/target.php?id=214311908) on the day you submit:
+**Status: draft, not submitted.** ExoFOP accepts community candidates only after they are published
+in a peer-reviewed journal, or in an AAS Research Note (RNAAS) that cites a detection and vetting
+method already published in a peer-reviewed journal. The paper URL is a required field
+(https://exofop.ipac.caltech.edu/tess/candidate_help.php, checked 2026-10-21). So this file is
+material for that paper, or for a collaborator's, not something to upload now. Re-check the target page (https://exofop.ipac.caltech.edu/tess/target.php?id=214311908) on the day you submit:
 on 2026-10-19 it listed no TOI, no CTOI, no imaging, spectroscopy, time series or files.
 
 Numbers come from `ctoi_parameters.json` (written by `scripts/ctoi_TIC214311908.py` from the

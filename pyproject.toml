@@ -1,7 +1,7 @@
 [project]
 name = "exoplanets-research"
 version = "0.1.0"
-description = "Exoplanet research analysis"
+description = "Transit search for planets around nearby M dwarfs in TESS sectors"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

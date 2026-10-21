@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software or the TIC 214311908 candidate analysis, please cite it as below."
+title: "Exoplanet transit search in TESS M dwarfs"
+abstract: >-
+  A pipeline that searches one TESS sector of QLP light curves for transiting planets around
+  M dwarfs within 100 pc: detrending (wotan), transit search (TLS), automated vetting,
+  cross-match against known objects, injection-recovery calibration, and automated follow-up
+  (multi-sector repetition, PRF fit of difference images, MCMC transit fit, TRICERATOPS).
+  Applied to sector 104, it recovers all 9 known transiting planets in the target list and
+  yields one new candidate, TIC 214311908 (P = 5.6915 d, Rp = 4.9 R_Earth).
+authors:
+  - family-names: "Rodriguez Salgado"
+    given-names: "Jose Jorge"
+type: software
+version: "0.1.0"
+date-released: "2026-10-21"
+license: MIT
+repository-code: "https://github.com/josejorgers/exoplanets-research"
+keywords:
+  - exoplanets
+  - TESS
+  - transit search
+  - M dwarfs
+  - TLS
+  - TRICERATOPS

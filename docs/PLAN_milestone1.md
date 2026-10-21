@@ -487,7 +487,7 @@ Definition of done: a full-sector run completes unattended, recovers the known T
 2. Look at the target pixel file and centroids; check nearby Gaia sources within the aperture.
 3. Fit a transit model (`batman` + `emcee`, or `juliet`) for radius, impact parameter, and density check.
 4. Run TRICERATOPS for a false-positive probability.
-5. If it holds up, submit as a **CTOI** on ExoFOP (requires a free account) with your ephemeris and plots.
+5. If it holds up, publish it (a refereed paper, or an AAS Research Note citing published methods), then upload it as a **CTOI** on ExoFOP with the paper link, ephemeris and plots. ExoFOP only accepts published candidates and gives upload accounts to contributing astronomers (https://exofop.ipac.caltech.edu/tess/candidate_help.php).
 
 ---
 

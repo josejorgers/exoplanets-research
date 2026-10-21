@@ -22,3 +22,6 @@ data/
 *.ipynb_checkpoints
 # lightkurve cache when notebooks run from notebooks/ (relative LIGHTKURVE_CACHE_DIR)
 notebooks/.lightkurve/
+
+# Browser automation scratch
+.playwright-mcp/

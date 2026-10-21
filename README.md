@@ -6,7 +6,7 @@ of new candidates. Milestone 1 of `docs/PLAN_milestone1.md`; first run on **sect
 the top of that file: all 9 confirmed transiting planets in the target list found, 8 of them
 passing vetting and labelled known; 13 new signals: 12 rejected by the automatic follow-up,
 one candidate, TIC 214311908, with FPP 0.09 ± 0.05 once neighbours excluded by the pixel fit
-are dropped; not yet submitted as a CTOI).
+are dropped; not yet a CTOI, since ExoFOP requires a publication first).
 
 ## Pipeline
 
@@ -90,3 +90,9 @@ notebooks/  walkthroughs (see above)
 docs/       plan, decision log, candidate review
 data/       everything produced (git-ignored)
 ```
+
+## Licence and citation
+
+Code (`src/`, `scripts/`, `tests/`) is under the MIT licence (`LICENSE`). Documents, figures and
+notebooks (`docs/`, `notebooks/`) are under CC BY 4.0 (`LICENSE-docs`). To cite this work, use
+`CITATION.cff` (GitHub's "Cite this repository" button) or the Zenodo DOI of the release.

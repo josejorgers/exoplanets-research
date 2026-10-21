@@ -1014,7 +1014,9 @@ sector 104 (details in [PLAN_milestone1.md](../PLAN_milestone1.md) and
    dropped, and 0.45 if they are not. Both are below the 0.5 we set as the bar for reporting a
    candidate. Neither is low enough to call it a planet: observations from the ground, with
    images sharp enough to separate the stars, are still needed. A draft report for the TESS
-   community list is in [docs/ctoi/](../ctoi/TIC214311908/CTOI_notes.md).
+   community list is in [docs/ctoi/](../ctoi/TIC214311908/CTOI_notes.md). That list only accepts
+   candidates already published, in a refereed journal or in a short AAS Research Note that
+   cites published methods, so the draft is material for such a note.
 
 So no new planet yet, but one good candidate. That is the normal outcome of a search like this, and each run makes the
 checks better. The pipeline's job is to make sure that when a real one is there, it reaches the
@@ -1055,7 +1057,7 @@ top of the list, and that we can say *why* each of the others is not a planet.
 | **centroid shift** | movement of the centre of light during a dip, a sign of a blend |
 | **candidate** | a signal that passed every check we can do; not yet a confirmed planet |
 | **false-positive probability (FPP)** | the chance, given the light curve, the star and its neighbours, that the dip is caused by something other than a planet on our star; computed with the TRICERATOPS program |
-| **TOI / CTOI** | TESS Object of Interest (official candidate list) / Community TOI (candidates submitted by anyone) |
+| **TOI / CTOI** | TESS Object of Interest (official candidate list) / Community TOI (candidates from outside the TESS team, uploaded to ExoFOP once published) |
 
 *Figures: synthetic data drawn by [figures/make_figures.py](figures/make_figures.py), which
 you can re-run and modify (`uv run python docs/primer/figures/make_figures.py`). The script also
