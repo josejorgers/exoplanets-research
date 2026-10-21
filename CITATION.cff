@@ -10,7 +10,8 @@ abstract: >-
   yields one new candidate, TIC 214311908 (P = 5.6915 d, Rp = 4.9 R_Earth).
 authors:
   - family-names: "Rodriguez Salgado"
-    given-names: "Jose Jorge"
+    given-names: "José Jorge"
+    orcid: "https://orcid.org/0009-0003-1595-6961"
 type: software
 version: "0.1.0"
 date-released: "2026-10-21"

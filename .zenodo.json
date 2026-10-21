@@ -3,12 +3,27 @@
   "upload_type": "software",
   "description": "<p>A pipeline that searches one TESS sector of QLP light curves for transiting planets around M dwarfs within 100 pc: detrending (wotan), transit search (TLS), automated vetting, cross-match against known TOIs, CTOIs, planets and eclipsing binaries, injection-recovery calibration, and automated follow-up (multi-sector repetition, PRF fit of difference images, MCMC transit fit, TRICERATOPS false-positive probability).</p><p>Applied to sector 104, it recovers all 9 known transiting planets in the target list and yields one new planet candidate, TIC 214311908: P = 5.691498 &plusmn; 0.000007 d, epoch 2460852.2989 &plusmn; 0.0012 BJD_TDB, depth 15100 &plusmn; 800 ppm, duration 1.71 &plusmn; 0.10 h, Rp = 4.85 &plusmn; 0.42 R_Earth, FPP 0.09 &plusmn; 0.05. The candidate analysis and summary figures are in docs/ctoi/TIC214311908/ and notebooks/candidate-TIC214311908.ipynb. Not yet confirmed: high-resolution imaging and seeing-limited photometry are needed.</p><p>Code under MIT; documents, figures and notebooks under CC BY 4.0.</p>",
   "creators": [
-    {"name": "Rodriguez Salgado, Jose Jorge"}
+    {
+      "name": "Rodriguez Salgado, José Jorge",
+      "orcid": "0009-0003-1595-6961"
+    }
   ],
   "license": "MIT",
-  "keywords": ["exoplanets", "TESS", "transit search", "M dwarfs", "TLS", "TRICERATOPS", "TIC 214311908"],
+  "keywords": [
+    "exoplanets",
+    "TESS",
+    "transit search",
+    "M dwarfs",
+    "TLS",
+    "TRICERATOPS",
+    "TIC 214311908"
+  ],
   "version": "0.1.0",
   "related_identifiers": [
-    {"identifier": "https://github.com/josejorgers/exoplanets-research", "relation": "isSupplementTo", "scheme": "url"}
+    {
+      "identifier": "https://github.com/josejorgers/exoplanets-research",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
   ]
 }
